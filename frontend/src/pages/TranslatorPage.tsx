@@ -9,7 +9,9 @@ import {
   Clock,
   Layers,
   AlertCircle,
-  HelpCircle
+  HelpCircle,
+  Cpu,
+  BrainCircuit
 } from 'lucide-react';
 import { Language, TranslationResult } from '../types';
 import { translateText } from '../services/api';
@@ -35,6 +37,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<'nllb' | 'custom'>('nllb');
   const [numBeams, setNumBeams] = useState(4);
   const [showAlternatives, setShowAlternatives] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -57,7 +60,8 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         sourceLang,
         targetLang,
         numBeams,
-        showAlternatives
+        showAlternatives,
+        selectedModel
       );
       setResult(res);
     } catch (err: any) {
@@ -107,7 +111,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   };
 
   // Quick preset trials
-  const presets = [
+  const nllbPresets = [
     { label: 'English → Hindi ("i am harsh kumar")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'i am harsh kumar' },
     { label: 'English → Hindi ("what is your name")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
     { label: 'English → Hindi ("welcome to TranslateMe")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to TranslateMe' },
@@ -115,6 +119,16 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     { label: 'Tamil → French', src: 'tam_Taml', tgt: 'fra_Latn', text: 'வணக்கம், எப்படி இருக்கிறீர்கள்?' },
     { label: 'English → Telugu', src: 'eng_Latn', tgt: 'tel_Telu', text: 'i am harsh kumar' },
   ];
+
+  const customPresets = [
+    { label: 'hello how are you', src: 'eng_Latn', tgt: 'hin_Deva', text: 'hello how are you' },
+    { label: 'what is your name', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
+    { label: 'good morning', src: 'eng_Latn', tgt: 'hin_Deva', text: 'good morning' },
+    { label: 'thank you very much', src: 'eng_Latn', tgt: 'hin_Deva', text: 'thank you very much' },
+    { label: 'welcome to my transformer', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to my transformer' },
+  ];
+
+  const activePresets = selectedModel === 'custom' ? customPresets : nllbPresets;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
@@ -124,15 +138,62 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
           Universal Multilingual Translation
         </h1>
         <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          Translate seamlessly across hundreds of languages using the state-of-the-art NLLB-200 Transformer architecture. Direct many-to-many translation without English bridging.
+          Choose between Meta AI's 200-language NLLB-200 Transformer or your own custom Transformer built from scratch in PyTorch.
         </p>
 
+        {/* Model Engine Selector */}
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedModel('nllb');
+              setResult(null);
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold transition-all border active:scale-95 ${
+              selectedModel === 'nllb'
+                ? 'bg-brand-600 text-white border-brand-500 shadow-md shadow-brand-500/25 ring-2 ring-brand-500/20'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>NLLB-200 (615M Pretrained)</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedModel('custom');
+              setResult(null);
+              setSourceLang('eng_Latn');
+              setTargetLang('hin_Deva');
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold transition-all border active:scale-95 ${
+              selectedModel === 'custom'
+                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-violet-500 shadow-md shadow-violet-500/25 ring-2 ring-violet-500/20'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850'
+            }`}
+          >
+            <Cpu className="w-4 h-4 text-violet-300" />
+            <span>My Custom Transformer (From Scratch)</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-800/90 text-white font-extrabold uppercase tracking-wider">
+              PyTorch
+            </span>
+          </button>
+        </div>
+
+        {selectedModel === 'custom' && (
+          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-50 dark:bg-violet-950/60 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-xs animate-in fade-in duration-200">
+            <BrainCircuit className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>Running your own custom PyTorch Seq2SeqTransformer (d_model=128, 4 heads, 2 layers, 100% local PyTorch)</span>
+          </div>
+        )}
+
         {/* Quick Test Presets */}
-        <div className="mt-5 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
+        <div className="mt-4 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1 flex-shrink-0">
-            Quick Tests:
+            {selectedModel === 'custom' ? 'Custom Samples:' : 'Quick Tests:'}
           </span>
-          {presets.map((p, idx) => (
+          {activePresets.map((p, idx) => (
             <button
               key={idx}
               onClick={() => {
@@ -283,9 +344,18 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
               </div>
 
               {result && (
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center gap-1 bg-brand-50 dark:bg-brand-950/60 text-brand-700 dark:text-brand-300 px-2 py-0.5 rounded text-[11px] font-mono border border-brand-200 dark:border-brand-800">
-                    <Clock className="w-3 h-3" />
+                <div className="flex flex-wrap items-center gap-2">
+                  {result.model_name && result.model_name.includes("Custom") ? (
+                    <span className="bg-violet-100 text-violet-700 dark:bg-violet-950/80 dark:text-violet-300 border border-violet-300 dark:border-violet-800 px-2 py-0.5 rounded text-[11px] font-bold">
+                      Custom PyTorch Model
+                    </span>
+                  ) : (
+                    <span className="bg-brand-50 text-brand-700 dark:bg-brand-950/80 dark:text-brand-300 border border-brand-200 dark:border-brand-800 px-2 py-0.5 rounded text-[11px] font-semibold">
+                      NLLB-200
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded text-[11px] font-mono">
+                    <Clock className="w-3 h-3 text-brand-500" />
                     {result.inference_time}s
                   </span>
                   {result.detected_language && (

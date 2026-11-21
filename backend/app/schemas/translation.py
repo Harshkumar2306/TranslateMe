@@ -13,6 +13,7 @@ class TranslateRequest(BaseModel):
     target_language: str = Field(..., description="Target language code (e.g., 'hin_Deva')")
     num_beams: Optional[int] = Field(2, ge=1, le=5, description="Number of beams for beam search")
     return_alternatives: Optional[bool] = Field(False, description="Whether to return alternative translations")
+    model_type: Optional[str] = Field("nllb", description="'nllb' or 'custom'")
 
 
 class TranslateResponse(BaseModel):

@@ -24,6 +24,7 @@ from backend.app.schemas.translation import (
     DocumentTranslateResponse
 )
 from backend.app.services.nllb_service import translation_engine
+from backend.app.services.custom_transformer_service import custom_transformer_engine
 from backend.app.services.language_codes import get_supported_languages, is_valid_language, get_language_name
 from backend.app.services.language_detector import detect_language
 from backend.app.services.document_service import extract_text_from_file, translate_document
@@ -68,13 +69,16 @@ def detect_lang(req: DetectLanguageRequest):
 def translate_text(req: TranslateRequest, db: Session = Depends(get_db)):
     """Translates text between any supported language pair using NLLB-200."""
     try:
-        result = translation_engine.translate(
-            text=req.text,
-            source_lang=req.source_language,
-            target_lang=req.target_language,
-            num_beams=req.num_beams or 2,
-            return_alternatives=req.return_alternatives or False
-        )
+        if req.model_type == "custom":
+            result = custom_transformer_engine.translate(text=req.text)
+        else:
+            result = translation_engine.translate(
+                text=req.text,
+                source_lang=req.source_language,
+                target_lang=req.target_language,
+                num_beams=req.num_beams or 2,
+                return_alternatives=req.return_alternatives or False
+            )
 
         # Record in SQLite history
         history_entry = TranslationHistory(
