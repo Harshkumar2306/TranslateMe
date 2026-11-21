@@ -19,5 +19,5 @@ class TranslationHistory(Base):
     target_language_name = Column(String(100), nullable=True)
     detected_language = Column(String(50), nullable=True)
     inference_time = Column(Float, default=0.0)
-    model_name = Column(String(100), default="NLLB-200")
+    model_name = Column(String(100), default="TranslateMe-Custom-Transformer")
     created_at = Column(DateTime, default=datetime.utcnow)

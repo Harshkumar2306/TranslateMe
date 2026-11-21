@@ -1,42 +1,48 @@
-# TranslateMe Deep Learning Training Configuration
+# TranslateMe Custom Multilingual Transformer Configuration
 project_name: "TranslateMe"
-experiment_name: "nllb_finetuning_en_hi"
+experiment_name: "from_scratch_multilingual_transformer"
 
-# Model Selection
+# Custom Transformer Architecture (Vaswani et al., 2017)
 model:
-  pretrained_model_name: "facebook/nllb-200-distilled-600M"
-  src_lang: "eng_Latn"
-  tgt_lang: "hin_Deva"
-  max_source_length: 128
-  max_target_length: 128
+  architecture: "Seq2SeqTransformer"
+  d_model: 256
+  n_heads: 4
+  num_encoder_layers: 3
+  num_decoder_layers: 3
+  d_ff: 1024
+  dropout: 0.1
+  share_embeddings: true
+  vocab_size: 2000
+  languages: ["en", "hi", "ta", "te"]
+  control_tokens: ["<2en>", "<2hi>", "<2ta>", "<2te>"]
+  max_seq_len: 128
 
-# Dataset Configuration
+# Dataset & Partitioning
 dataset:
-  name: "sample_parallel_corpus"
-  raw_data_dir: "ml_lab/datasets/raw"
-  processed_data_dir: "ml_lab/datasets/processed"
+  name: "multilingual_indic_english_corpus"
+  raw_dir: "ml_lab/datasets/raw"
+  processed_dir: "ml_lab/datasets/processed"
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
-  clean_unicode: true
-  min_length: 2
-  max_length: 256
+  unicode_nfc: true
+  max_ratio: 2.5
 
-# Hyperparameters
+# Training Hyperparameters
 training:
-  output_dir: "ml_lab/checkpoints/nllb_finetuned"
-  learning_rate: 5.0e-5
+  output_dir: "ml_lab/checkpoints"
+  checkpoint_name: "custom_multilingual_transformer.pt"
+  tokenizer_path: "ml_lab/tokenizer/multilingual_tokenizer.json"
+  epochs: 40
+  batch_size: 8
+  learning_rate: 0.004
+  optimizer: "AdamW"
+  beta1: 0.9
+  beta2: 0.98
+  eps: 1.0e-9
   weight_decay: 0.01
-  num_train_epochs: 3
-  per_device_train_batch_size: 4
-  per_device_eval_batch_size: 4
-  gradient_accumulation_steps: 2
-  warmup_ratio: 0.1
-  fp16: false  # Set true on NVIDIA GPU
-  bf16: false
-  logging_steps: 10
-  eval_steps: 50
-  save_steps: 50
-  save_total_limit: 2
-  early_stopping_patience: 3
+  grad_clip: 1.0
+  label_smoothing: 0.1
+  warmup_steps: 50
+  scheduler: "Noam"
   seed: 42

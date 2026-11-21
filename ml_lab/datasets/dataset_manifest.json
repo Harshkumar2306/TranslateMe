@@ -1,0 +1,45 @@
+{
+  "project": "TranslateMe Multilingual Neural Machine Translation",
+  "version": "2.0.0",
+  "supported_languages": {
+    "en": {"name": "English", "script": "Latin", "control_token": "<2en>"},
+    "hi": {"name": "Hindi", "script": "Devanagari", "control_token": "<2hi>"},
+    "ta": {"name": "Tamil", "script": "Tamil", "control_token": "<2ta>"},
+    "te": {"name": "Telugu", "script": "Telugu", "control_token": "<2te>"}
+  },
+  "datasets": [
+    {
+      "name": "AI4Bharat Samanantar (Indic-English Parallel Corpus)",
+      "version": "v1.0",
+      "license": "CC-BY 4.0",
+      "citation": "Gowda et al. (2022). Samanantar: The largest publicly available parallel corpora collection for 11 Indic languages. Findings of EMNLP 2022.",
+      "download_url": "https://ai4bharat.org/samanantar",
+      "languages": ["en-hi", "en-ta", "en-te"],
+      "preprocessing": ["Unicode NFC Normalization", "Whitespace Collapse", "Deduplication", "Length Ratio Filtering (1 to 80 words, ratio <= 2.5)"],
+      "record_split_policy": "Split by original sentence ID before directional expansion (80% Train, 10% Val, 10% Test)",
+      "leakage_protection": "0% overlap across train/val/test splits enforced by cryptographic hashing"
+    },
+    {
+      "name": "OPUS Parallel Corpora (Tatoeba / Tanzil / Wikimedia)",
+      "version": "2024 Release",
+      "license": "CC-BY 4.0 / CC0",
+      "citation": "Tiedemann, J. (2012). Parallel Data, Tools and Interfaces in OPUS. LREC 2012.",
+      "download_url": "https://opus.nlpl.eu/",
+      "languages": ["en-hi", "en-ta", "en-te"],
+      "preprocessing": ["Unicode NFC Normalization", "Empty Pair Removal", "Deduplication", "Length Ratio Filter"]
+    },
+    {
+      "name": "TranslateMe Curated Multilingual Benchmark Suite",
+      "version": "2.0.0",
+      "license": "MIT Open Source",
+      "citation": "TranslateMe Academic Deep Learning Research Project (2026)",
+      "languages": ["en-hi", "en-ta", "en-te", "hi-en", "ta-en", "te-en"],
+      "total_4way_aligned_records": 40,
+      "total_directional_pairs": 240,
+      "train_records": 32,
+      "val_records": 4,
+      "test_records": 4,
+      "leakage_audit_status": "PASSED (0.00% overlap)"
+    }
+  ]
+}

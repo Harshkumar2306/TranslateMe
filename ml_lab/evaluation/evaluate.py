@@ -1,10 +1,12 @@
 """
 Scientific Evaluation Pipeline for Custom Multilingual Transformer
-Evaluates on independent held-out test sets across language directions (en-hi, en-ta, en-te).
-Computes genuine SacreBLEU, chrF++, Latency, and Throughput without data leakage.
+Evaluates on independent held-out test sets across language directions (en-hi, en-ta, en-te, hi-en, ta-en, te-en).
+Computes genuine SacreBLEU, chrF++, Latency, Throughput, Empty Rate, and Repetition Rate without data leakage.
+Exports JSON, CSV, Markdown report, and individual direction sample files.
 """
 
 import os
+import csv
 import json
 import torch
 import matplotlib
@@ -15,58 +17,7 @@ from typing import Dict, Any, List
 from ml_lab.custom_transformer import Seq2SeqTransformer
 from ml_lab.tokenizer import MultilingualSubwordTokenizer
 from ml_lab.evaluation.metrics import compute_sacrebleu, compute_chrf, benchmark_translation_speed
-
-# Independent held-out test suite across all 4 languages (English, Hindi, Tamil, Telugu)
-HELD_OUT_TEST_SUITE = [
-    {
-        "en": "Hello, how are you today?",
-        "hi": "नमस्ते, आज आप कैसे हैं?",
-        "ta": "வணக்கம், இன்று நீங்கள் எப்படி இருக்கிறீர்கள்?",
-        "te": "నమస్కారం, ఈరోజు మీరు ఎలా ఉన్నారు?"
-    },
-    {
-        "en": "What is your name?",
-        "hi": "आपका नाम क्या है?",
-        "ta": "உங்கள் பெயர் என்ன?",
-        "te": "మీ పేరు ఏమిటి?"
-    },
-    {
-        "en": "My name is Harsh Kumar.",
-        "hi": "मेरा नाम हर्ष कुमार है।",
-        "ta": "என் பெயர் ஹர்ஷ் குமார்.",
-        "te": "నా పేరు హర్ష్ కుమార్."
-    },
-    {
-        "en": "Thank you very much for your kind help.",
-        "hi": "आपकी विनम्र मदद के लिए बहुत-बहुत धन्यवाद।",
-        "ta": "உங்கள் கனிவான உதவிக்கு மிக்க நன்றி.",
-        "te": "మీ దయతో కూడిన సహాయానికి చాలా ధన్యవాదాలు."
-    },
-    {
-        "en": "Artificial intelligence is transforming language translation across the world.",
-        "hi": "आर्टिफिशियल इंटेलिजेंस दुनिया भर में भाषा अनुवाद को बदल रहा है।",
-        "ta": "செயற்கை நுண்ணறிவு உலகம் முழுவதும் மொழிபெயர்ப்பை மாற்றியமைக்கிறது.",
-        "te": "కృత్రిమ మేధస్సు ప్రపంచవ్యాప్తంగా భాషా అనువాదాన్ని మారుస్తోంది."
-    },
-    {
-        "en": "Transformers use self-attention mechanisms to process sequential text.",
-        "hi": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।",
-        "ta": "டிரான்ஸ்பார்மர்கள் தொடர் உரையை செயலாக்க சுய-கவன வழிமுறைகளைப் பயன்படுத்துகின்றன.",
-        "te": "ట్రాన్స్‌ఫార్మర్లు వరుస పాఠ్యాన్ని ప్రాసెస్ చేయడానికి స్వీయ-శ్రద్ధ విధానాలను ఉపయోగిస్తాయి."
-    },
-    {
-        "en": "Knowledge and education empower individuals to achieve their dreams.",
-        "hi": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।",
-        "ta": "அறிவும் கல்வியும் தனிநபர்கள் தங்கள் கனவுகளை அடைய அதிகாரம் அளிக்கின்றன.",
-        "te": "జ్ఞానం మరియు విద్య వ్యక్తులు తమ కలలను సాధించేలా సాధికారత కల్పిస్తాయి."
-    },
-    {
-        "en": "Students should practice coding and deep learning daily.",
-        "hi": "छात्रों को प्रतिदिन कोडिंग और डीप लर्निंग का अभ्यास करना चाहिए।",
-        "ta": "மாணவர்கள் தினமும் கோடிங் மற்றும் ஆழமான கற்றலைப் பயிற்சி செய்ய வேண்டும்.",
-        "te": "విద్యార్థులు ప్రతిరోజూ కోడింగ్ మరియు డీప్ లెర్నింగ్ సాధన చేయాలి."
-    }
-]
+from ml_lab.datasets.curated_corpus import get_held_out_test_records
 
 
 def load_custom_multilingual_model(
@@ -77,17 +28,20 @@ def load_custom_multilingual_model(
         raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
 
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    tokenizer = MultilingualSubwordTokenizer.load(ckpt["tokenizer_path"])
+    tok_path = ckpt.get("tokenizer_path", "ml_lab/tokenizer/multilingual_tokenizer.json")
+    if not os.path.exists(tok_path):
+        tok_path = "ml_lab/tokenizer/multilingual_tokenizer.json"
+    tokenizer = MultilingualSubwordTokenizer.load(tok_path)
     cfg = ckpt["config"]
 
     model = Seq2SeqTransformer(
-        src_vocab_size=cfg["vocab_size"],
-        tgt_vocab_size=cfg["vocab_size"],
-        d_model=cfg["d_model"],
-        n_heads=cfg["n_heads"],
-        num_encoder_layers=cfg["num_layers"],
-        num_decoder_layers=cfg["num_layers"],
-        d_ff=cfg["d_ff"],
+        src_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
+        tgt_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
+        d_model=cfg.get("d_model", 256),
+        n_heads=cfg.get("n_heads", 4),
+        num_encoder_layers=cfg.get("num_layers", 3),
+        num_decoder_layers=cfg.get("num_layers", 3),
+        d_ff=cfg.get("d_ff", 1024),
         share_embeddings=True
     ).to(device)
 
@@ -101,11 +55,12 @@ def evaluate_direction(
     tokenizer: MultilingualSubwordTokenizer,
     src_lang: str,
     tgt_lang: str,
+    test_records: list,
     device: str = "cpu",
     use_beam_search: bool = True
 ) -> Dict[str, Any]:
-    sources = [item[src_lang] for item in HELD_OUT_TEST_SUITE]
-    references = [item[tgt_lang] for item in HELD_OUT_TEST_SUITE]
+    sources = [getattr(r, src_lang) for r in test_records]
+    references = [getattr(r, tgt_lang) for r in test_records]
     tgt_control_id = tokenizer.get_control_token_id(tgt_lang)
 
     def translate_fn(text: str) -> str:
@@ -139,12 +94,36 @@ def evaluate_direction(
     chrf = compute_chrf(predictions, references)
     speed = benchmark_translation_speed(translate_fn, sources)
 
+    # Compute additional linguistic & generation quality metrics
+    avg_src_len = round(sum(len(s.split()) for s in sources) / max(1, len(sources)), 1)
+    avg_gen_len = round(sum(len(p.split()) for p in predictions) / max(1, len(predictions)), 1)
+    empty_count = sum(1 for p in predictions if not p.strip())
+    empty_rate = round(empty_count / max(1, len(predictions)), 3)
+
+    # Repetition rate: percentage of repeated consecutive tokens
+    def calc_repetition(p: str) -> float:
+        words = p.split()
+        if len(words) <= 1:
+            return 0.0
+        repeats = sum(1 for i in range(len(words)-1) if words[i] == words[i+1])
+        return repeats / (len(words) - 1)
+
+    avg_rep_rate = round(sum(calc_repetition(p) for p in predictions) / max(1, len(predictions)), 3)
+
     return {
         "direction": f"{src_lang} -> {tgt_lang}",
-        "bleu": bleu,
-        "chrf": chrf,
+        "src_lang": src_lang,
+        "tgt_lang": tgt_lang,
+        "test_sentence_count": len(sources),
+        "bleu": round(bleu, 2),
+        "chrf": round(chrf, 2),
         "avg_latency_sec": speed["avg_latency_sec"],
         "throughput_chars_per_sec": speed["throughput_chars_per_sec"],
+        "avg_source_word_len": avg_src_len,
+        "avg_target_word_len": avg_gen_len,
+        "empty_rate": empty_rate,
+        "repetition_rate": avg_rep_rate,
+        "decoding_algorithm": "Beam Search (k=4, length_penalty=0.6, rep_penalty=1.25)",
         "samples": [
             {"source": s, "reference": r, "hypothesis": p}
             for s, r, p in zip(sources, references, predictions)
@@ -160,6 +139,7 @@ def run_full_evaluation():
     print("========================================================")
 
     model, tokenizer, ckpt = load_custom_multilingual_model(device=device)
+    test_records = get_held_out_test_records()
 
     directions = [
         ("en", "hi"),
@@ -172,20 +152,59 @@ def run_full_evaluation():
 
     results = {}
     for src, tgt in directions:
-        eval_res = evaluate_direction(model, tokenizer, src, tgt, device=device)
+        eval_res = evaluate_direction(model, tokenizer, src, tgt, test_records, device=device)
         print(f"[{eval_res['direction']}] SacreBLEU: {eval_res['bleu']:.2f} | chrF++: {eval_res['chrf']:.2f} | Latency: {eval_res['avg_latency_sec']}s")
         results[eval_res['direction']] = eval_res
 
-    # Save evaluation results JSON
     out_dir = "ml_lab/evaluation/results"
     os.makedirs(out_dir, exist_ok=True)
-    report_path = os.path.join(out_dir, "custom_multilingual_evaluation_report.json")
-    with open(report_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2, ensure_ascii=False)
-    print(f"\nFull scientific evaluation report saved to: {report_path}")
 
-    # Plot evaluation chart
+    # 1. Save JSON report
+    report_json = os.path.join(out_dir, "custom_multilingual_evaluation_report.json")
+    with open(report_json, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+
+    # 2. Save CSV summary
+    report_csv = os.path.join(out_dir, "custom_multilingual_evaluation_report.csv")
+    with open(report_csv, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["Direction", "SacreBLEU", "chrF++", "Avg Latency (s)", "Throughput (chars/s)", "Avg Source Len", "Avg Gen Len", "Empty Rate", "Repetition Rate", "Decoding"])
+        for d, res in results.items():
+            writer.writerow([
+                res["direction"], res["bleu"], res["chrf"], res["avg_latency_sec"],
+                res["throughput_chars_per_sec"], res["avg_source_word_len"],
+                res["avg_target_word_len"], res["empty_rate"], res["repetition_rate"],
+                res["decoding_algorithm"]
+            ])
+
+    # 3. Save Markdown report
+    report_md = os.path.join(out_dir, "custom_multilingual_evaluation_report.md")
+    with open(report_md, "w", encoding="utf-8") as f:
+        f.write("# Scientific Evaluation Report: Custom Multilingual Transformer\n\n")
+        f.write("Evaluated on independent held-out test data with zero data leakage.\n\n")
+        f.write("| Direction | SacreBLEU | chrF++ | Avg Latency (s) | Throughput (c/s) | Empty Rate | Repetition Rate |\n")
+        f.write("| :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
+        for d, res in results.items():
+            f.write(f"| **{res['direction']}** | {res['bleu']} | {res['chrf']} | {res['avg_latency_sec']}s | {res['throughput_chars_per_sec']} | {res['empty_rate']*100:.1f}% | {res['repetition_rate']*100:.1f}% |\n")
+        f.write("\n\n### Sample Predictions\n\n")
+        for d, res in results.items():
+            f.write(f"#### {res['direction']}\n")
+            for idx, samp in enumerate(res["samples"][:2], 1):
+                f.write(f"- **Sample {idx}**:\n")
+                f.write(f"  - Source: `{samp['source']}`\n")
+                f.write(f"  - Reference: `{samp['reference']}`\n")
+                f.write(f"  - Hypothesis: `{samp['hypothesis']}`\n")
+
+    # 4. Save per-direction sample JSONL
+    for d, res in results.items():
+        fname = f"samples_{res['src_lang']}_{res['tgt_lang']}.jsonl"
+        with open(os.path.join(out_dir, fname), "w", encoding="utf-8") as f:
+            for s in res["samples"]:
+                f.write(json.dumps(s, ensure_ascii=False) + "\n")
+
+    # 5. Plot evaluation chart
     plot_evaluation_chart(results, os.path.join(out_dir, "multilingual_bleu_chrf.png"))
+    print(f"\nAll scientific evaluation reports (JSON, CSV, MD, JSONL, PNG) saved to: {out_dir}")
     return results
 
 
@@ -198,10 +217,10 @@ def plot_evaluation_chart(results: Dict[str, Any], output_path: str):
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    rects1 = ax.bar([i - width/2 for i in x], bleu_scores, width, label="SacreBLEU", color="#4f6ef7")
+    rects1 = ax.bar([i - width/2 for i in x], bleu_scores, width, label="SacreBLEU", color="#7c3aed")
     rects2 = ax.bar([i + width/2 for i in x], chrf_scores, width, label="chrF++", color="#10b981")
 
-    ax.set_ylabel("Score (0-100)")
+    ax.set_ylabel("Metric Score (0-100)")
     ax.set_title("Custom Multilingual Transformer Evaluation Across Language Directions")
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, rotation=15)
@@ -211,7 +230,6 @@ def plot_evaluation_chart(results: Dict[str, Any], output_path: str):
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
-    print(f"Evaluation chart saved to: {output_path}")
 
 
 if __name__ == "__main__":

@@ -9,11 +9,11 @@ from pydantic import BaseModel, Field
 
 class TranslateRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=5000, description="Input text to translate")
-    source_language: str = Field(..., description="Source language code (e.g., 'eng_Latn' or 'auto')")
-    target_language: str = Field(..., description="Target language code (e.g., 'hin_Deva')")
+    source_language: str = Field(..., description="Source language code ('en', 'hi', 'ta', 'te')")
+    target_language: str = Field(..., description="Target language code ('en', 'hi', 'ta', 'te')")
     num_beams: Optional[int] = Field(2, ge=1, le=5, description="Number of beams for beam search")
     return_alternatives: Optional[bool] = Field(False, description="Whether to return alternative translations")
-    model_type: Optional[str] = Field("nllb", description="'nllb' or 'custom'")
+    model_type: Optional[str] = Field("custom", description="'custom' (Pure PyTorch Seq2Seq Transformer)")
 
 
 class TranslateResponse(BaseModel):

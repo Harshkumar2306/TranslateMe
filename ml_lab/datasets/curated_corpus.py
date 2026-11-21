@@ -4,7 +4,7 @@ Covers English (en), Hindi (hi), Tamil (ta), and Telugu (te).
 Strictly separates training, validation, and held-out test splits.
 """
 
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 
 
@@ -191,6 +191,78 @@ MULTILINGUAL_CORPUS_RECORDS: List[MultilingualSentence] = [
         ta="புதுப்பிக்கத்தக்க ஆற்றல் கார்பன் உமிழ்வைக் குறைத்து நமது சுற்றுச்சூழலைப் பாதுகாக்கிறது.",
         te="పునరుత్పాదక శక్తి కార్బన్ ఉద్గారాలను తగ్గిస్తుంది మరియు మన పర్యావరణాన్ని కాపాడుతుంది."
     ),
+    MultilingualSentence(
+        en="Data structures and algorithms form the foundation of computer science.",
+        hi="डेटा संरचनाएं और एल्गोरिदम कंप्यूटर विज्ञान की नींव बनाते हैं।",
+        ta="தரவு கட்டமைப்புகள் மற்றும் வழிமுறைகள் கணினி அறிவியலின் அடித்தளத்தை உருவாக்குகின்றன.",
+        te="డేటా నిర్మాణాలు మరియు అల్గారిథమ్‌లు కంప్యూటర్ సైన్స్‌కు పునాదిని ఏర్పరుస్తాయి."
+    ),
+    MultilingualSentence(
+        en="Neural networks learn representations through backpropagation and gradient descent.",
+        hi="न्यूरल नेटवर्क बैकप्रॉपैगैशन और ग्रेडिएंट डिसेंट के माध्यम से निरूपण सीखते हैं।",
+        ta="நியூரல் நெட்வொர்க்குகள் பேக் ப்ரோபகேஷன் மற்றும் கிரேடியன்ட் டீசென்ட் மூலம் பிரதிநிதித்துவங்களைக் கற்றுக்கொள்கின்றன.",
+        te="నాడీ నెట్‌వర్క్‌లు బ్యాక్‌ప్రొపగేషన్ మరియు గ్రేడియంట్ డీసెంట్ ద్వారా ప్రాతినిధ్యాలను నేర్చుకుంటాయి."
+    ),
+    MultilingualSentence(
+        en="Language translation connects diverse cultures across the globe.",
+        hi="भाषा अनुवाद दुनिया भर की विविध संस्कृतियों को जोड़ता है।",
+        ta="மொழிபெயர்ப்பு உலகம் முழுவதும் உள்ள பல்வேறு கலாச்சாரங்களை இணைக்கிறது.",
+        te="భాషా అనువాదం ప్రపంచవ్యాప్తంగా విభిన్న సంస్కృతులను కలుపుతుంది."
+    ),
+    MultilingualSentence(
+        en="Mathematics is the universal language of science and nature.",
+        hi="गणित विज्ञान और प्रकृति की सार्वभौमिक भाषा है।",
+        ta="கணிதம் என்பது அறிவியல் மற்றும் இயற்கையின் உலகளாவிய மொழியாகும்.",
+        te="గణితం అనేది సైన్స్ మరియు ప్రకృతి యొక్క సార్వత్రిక భాష."
+    ),
+    MultilingualSentence(
+        en="Software engineering requires attention to detail and rigorous testing.",
+        hi="सॉफ्टवेयर इंजीनियरिंग में विवरण पर ध्यान और कठोर परीक्षण की आवश्यकता होती है।",
+        ta="மென்பொருள் பொறியியலுக்கு நுணுக்கமான கவனமும் கடுமையான சோதனையும் தேவை.",
+        te="సాఫ్ట్‌వేర్ ఇంజనీరింగ్‌కు వివరాలపై శ్రద్ధ మరియు కఠినమైన పరీక్ష అవసరం."
+    ),
+    MultilingualSentence(
+        en="Cloud computing enables scalable infrastructure and global services.",
+        hi="क्लाउड कंप्यूटिंग स्केलेबल इंफ्रास्ट्रक्चर और वैश्विक सेवाओं को सक्षम बनाती है।",
+        ta="கிளவுட் கம்ப்யூட்டிங் அளவிடக்கூடிய உள்கட்டமைப்பு மற்றும் உலகளாவிய சேவைகளை செயல்படுத்துகிறது.",
+        te="క్లౌడ్ కంప్యూటింగ్ స్కేలబుల్ మౌలిక సదుపాయాలు మరియు గ్లోబల్ సేవలను అనుమతిస్తుంది."
+    ),
+    MultilingualSentence(
+        en="Open source software fosters global collaboration and innovation.",
+        hi="ओपन सोर्स सॉफ्टवेयर वैश्विक सहयोग और नवाचार को बढ़ावा देता है।",
+        ta="திறந்த மூல மென்பொருள் உலகளாவிய ஒத்துழைப்பையும் புதுமையையும் வளர்க்கிறது.",
+        te="ఓపెన్ సోర్స్ సాఫ్ట్‌వేర్ ప్రపంచ సహకారాన్ని మరియు ఆవిష్కరణలను ప్రోత్సహిస్తుంది."
+    ),
+    MultilingualSentence(
+        en="Cybersecurity safeguards sensitive information in digital systems.",
+        hi="साइबर सुरक्षा डिजिटल प्रणालियों में संवेदनशील जानकारी की रक्षा करती है।",
+        ta="சைபர் பாதுகாப்பு டிஜிட்டல் அமைப்புகளில் உள்ள முக்கியமான தகவல்களைப் பாதுகாக்கிறது.",
+        te="సైబర్ భద్రత డిజిటల్ సిస్టమ్‌లలోని సున్నితమైన సమాచారాన్ని రక్షిస్తుంది."
+    ),
+    MultilingualSentence(
+        en="Natural language processing analyzes syntax and semantics of text.",
+        hi="प्राकृतिक भाषा प्रसंस्करण पाठ के वाक्यविन्यास और शब्दार्थ का विश्लेषण करता है।",
+        ta="இயற்கை மொழி செயலாக்கம் உரையின் தொடரியல் மற்றும் சொற்பொருளை பகுப்பாய்வு செய்கிறது.",
+        te="సహజ భాషా ప్రాసెసింగ్ టెక్స్ట్ యొక్క వాక్యనిర్మాణం మరియు అర్థాన్ని విశ్లేషిస్తుంది."
+    ),
+    MultilingualSentence(
+        en="Deep learning has revolutionized image recognition and speech processing.",
+        hi="डीप लर्निंग ने छवि पहचान और वाक् प्रसंस्करण में क्रांति ला दी है।",
+        ta="ஆழமான கற்றல் பட அங்கீகாரம் மற்றும் பேச்சு செயலாக்கத்தில் புரட்சியை ஏற்படுத்தியுள்ளது.",
+        te="డీప్ లెర్నింగ్ ఇమేజ్ రికగ్నిషన్ మరియు స్పీచ్ ప్రాసెసింగ్‌లో విప్లవాత్మక మార్పులు తెచ్చింది."
+    ),
+    MultilingualSentence(
+        en="Curiosity and dedication lead to groundbreaking scientific discoveries.",
+        hi="जिज्ञासा और समर्पण अभूतपूर्व वैज्ञानिक खोजों की ओर ले जाते हैं।",
+        ta="ஆர்வமும் அர்ப்பணிப்பும் அற்புதமான அறிவியல் கண்டுபிடிப்புகளுக்கு வழிவகுக்கும்.",
+        te="జిజ్ఞాస మరియు అంకితభావం అద్భుతమైన శాస్త్రీయ ఆవిష్కరణలకు దారితీస్తాయి."
+    ),
+    MultilingualSentence(
+        en="Practice and discipline are necessary to master any skill.",
+        hi="किसी भी कौशल में महारत हासिल करने के लिए अभ्यास और अनुशासन आवश्यक हैं।",
+        ta="எந்தவொரு திறமையிலும் தேர்ச்சி பெற பயிற்சியும் ஒழுக்கமும் அவசியம்.",
+        te="ఏదైనా నైపుణ్యాన్ని సాధించడానికి సాధన మరియు క్రమశిక్షణ అవసరం."
+    ),
 ]
 
 
@@ -211,12 +283,73 @@ def generate_parallel_pairs(
     return pairs
 
 
-def get_all_monolingual_sentences() -> List[str]:
-    """Returns all sentences across all 4 languages for tokenizer training."""
-    texts = []
-    for rec in MULTILINGUAL_CORPUS_RECORDS:
-        texts.extend([rec.en, rec.hi, rec.ta, rec.te])
-    return list(set(texts))
+def get_training_records() -> List[MultilingualSentence]:
+    """Returns training partition (80% of original aligned records)."""
+    return MULTILINGUAL_CORPUS_RECORDS[:32]
+
+
+def get_validation_records() -> List[MultilingualSentence]:
+    """Returns validation partition (10% of original aligned records)."""
+    return MULTILINGUAL_CORPUS_RECORDS[32:36]
+
+
+def get_held_out_test_records() -> List[MultilingualSentence]:
+    """Returns strictly held-out test partition (10% of original aligned records)."""
+    return MULTILINGUAL_CORPUS_RECORDS[36:40]
+
+
+def get_training_pairs(lang_pairs: Optional[List[Tuple[str, str]]] = None) -> List[Tuple[str, str, str]]:
+    """Generates directional pairs exclusively from training records (source, target, target_lang)."""
+    if lang_pairs is None:
+        lang_pairs = [("en", "hi"), ("en", "ta"), ("en", "te"), ("hi", "en"), ("ta", "en"), ("te", "en")]
+    pairs = []
+    for rec in get_training_records():
+        for s_lang, t_lang in lang_pairs:
+            s_text = getattr(rec, s_lang)
+            t_text = getattr(rec, t_lang)
+            pairs.append((s_text, t_text, t_lang))
+    return pairs
+
+
+def get_validation_pairs(lang_pairs: Optional[List[Tuple[str, str]]] = None) -> List[Tuple[str, str, str]]:
+    """Generates directional pairs exclusively from validation records."""
+    if lang_pairs is None:
+        lang_pairs = [("en", "hi"), ("en", "ta"), ("en", "te"), ("hi", "en"), ("ta", "en"), ("te", "en")]
+    pairs = []
+    for rec in get_validation_records():
+        for s_lang, t_lang in lang_pairs:
+            s_text = getattr(rec, s_lang)
+            t_text = getattr(rec, t_lang)
+            pairs.append((s_text, t_text, t_lang))
+    return pairs
+
+
+def get_held_out_test_pairs(lang_pairs: Optional[List[Tuple[str, str]]] = None) -> List[Tuple[str, str, str]]:
+    """Generates directional pairs exclusively from held-out test records."""
+    if lang_pairs is None:
+        lang_pairs = [("en", "hi"), ("en", "ta"), ("en", "te"), ("hi", "en"), ("ta", "en"), ("te", "en")]
+    pairs = []
+    for rec in get_held_out_test_records():
+        for s_lang, t_lang in lang_pairs:
+            s_text = getattr(rec, s_lang)
+            t_text = getattr(rec, t_lang)
+            pairs.append((s_text, t_text, t_lang))
+    return pairs
+
+
+def get_tokenizer_training_corpus() -> List[str]:
+    """Returns monolingual sentences strictly from training records to prevent tokenizer leakage."""
+    texts = set()
+    for rec in get_training_records():
+        texts.add(rec.en)
+        texts.add(rec.hi)
+        texts.add(rec.ta)
+        texts.add(rec.te)
+    return list(texts)
+
+
+# Alias for backwards compatibility
+get_all_monolingual_sentences = get_tokenizer_training_corpus
 
 
 def generate_multilingual_training_set(
