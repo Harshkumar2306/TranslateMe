@@ -80,8 +80,8 @@ export const DeepLearningLabPage: React.FC = () => {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex justify-center mb-8">
-        <div className="inline-flex p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+      <div className="flex justify-center mb-8 overflow-x-auto no-scrollbar py-1">
+        <div className="inline-flex p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 max-w-full overflow-x-auto no-scrollbar">
           {[
             { id: 'architecture', label: 'Architecture & Theory', icon: BookOpen },
             { id: 'attention', label: 'Multi-Head Attention', icon: Layers },
@@ -94,7 +94,7 @@ export const DeepLearningLabPage: React.FC = () => {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap flex-shrink-0 ${
                   isSelected
                     ? 'bg-white dark:bg-slate-900 text-brand-600 dark:text-brand-400 shadow-sm'
                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'

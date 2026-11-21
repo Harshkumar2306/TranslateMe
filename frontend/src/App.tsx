@@ -60,7 +60,7 @@ export function App() {
         toggleTheme={toggleTheme}
       />
 
-      <main className="flex-1 pb-16">
+      <main className="flex-1 pb-28 sm:pb-16">
         {activeTab === 'translator' && (
           <TranslatorPage
             languages={languages}
