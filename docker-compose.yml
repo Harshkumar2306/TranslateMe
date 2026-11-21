@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  lingua-ai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lingua_ai_app
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - MODEL_NAME=facebook/nllb-200-distilled-600M
+    volumes:
+      - ./backend/lingua_ai.db:/app/lingua_ai.db
+      - ./models/checkpoints:/app/models/checkpoints
+    restart: unless-stopped

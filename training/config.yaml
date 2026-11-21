@@ -1,0 +1,42 @@
+# LinguaAI Deep Learning Training Configuration
+project_name: "LinguaAI"
+experiment_name: "nllb_finetuning_en_hi"
+
+# Model Selection
+model:
+  pretrained_model_name: "facebook/nllb-200-distilled-600M"
+  src_lang: "eng_Latn"
+  tgt_lang: "hin_Deva"
+  max_source_length: 128
+  max_target_length: 128
+
+# Dataset Configuration
+dataset:
+  name: "sample_parallel_corpus"
+  raw_data_dir: "datasets/raw"
+  processed_data_dir: "datasets/processed"
+  train_split: 0.8
+  val_split: 0.1
+  test_split: 0.1
+  clean_unicode: true
+  min_length: 2
+  max_length: 256
+
+# Hyperparameters
+training:
+  output_dir: "models/checkpoints/nllb_finetuned"
+  learning_rate: 5.0e-5
+  weight_decay: 0.01
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 2
+  warmup_ratio: 0.1
+  fp16: false  # Set true on NVIDIA GPU
+  bf16: false
+  logging_steps: 10
+  eval_steps: 50
+  save_steps: 50
+  save_total_limit: 2
+  early_stopping_patience: 3
+  seed: 42
