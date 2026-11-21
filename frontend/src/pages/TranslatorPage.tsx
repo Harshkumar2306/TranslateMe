@@ -8,9 +8,8 @@ import {
   Sparkles,
   Clock,
   Layers,
-  ChevronDown,
   AlertCircle,
-  Play
+  HelpCircle
 } from 'lucide-react';
 import { Language, TranslationResult } from '../types';
 import { translateText } from '../services/api';
@@ -36,7 +35,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [numBeams, setNumBeams] = useState(2);
+  const [numBeams, setNumBeams] = useState(4);
   const [showAlternatives, setShowAlternatives] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
@@ -109,12 +108,12 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
 
   // Quick preset trials
   const presets = [
-    { label: 'English → Hindi', src: 'eng_Latn', tgt: 'hin_Deva', text: 'Welcome to LinguaAI, an advanced Transformer neural machine translation system.' },
-    { label: 'Hindi → Tamil', src: 'hin_Deva', tgt: 'tam_Taml', text: 'नमस्ते, आप कैसे हैं? आशा है कि आप अच्छे होंगे।' },
+    { label: 'English → Hindi ("i am harsh kumar")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'i am harsh kumar' },
+    { label: 'English → Hindi ("what is your name")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
+    { label: 'Hindi → Tamil', src: 'hin_Deva', tgt: 'tam_Taml', text: 'नमस्ते, आप कैसे हैं?' },
     { label: 'Tamil → French', src: 'tam_Taml', tgt: 'fra_Latn', text: 'வணக்கம், எப்படி இருக்கிறீர்கள்?' },
     { label: 'Telugu → Japanese', src: 'tel_Telu', tgt: 'jpn_Jpan', text: 'నమస్కారం, మీరు ఎలా ఉన్నారు?' },
-    { label: 'Malayalam → Bengali', src: 'mal_Mlym', tgt: 'ben_Beng', text: 'നമസ്കാരം, സുഖമാണോ?' },
-    { label: 'Spanish → English', src: 'spa_Latn', tgt: 'eng_Latn', text: 'La inteligencia artificial está transformando la investigación científica en todo el mundo.' },
+    { label: 'English → Telugu', src: 'eng_Latn', tgt: 'tel_Telu', text: 'i am harsh kumar' },
   ];
 
   return (
@@ -302,19 +301,19 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
 
         {/* Translation Submit Bar */}
         <div className="p-4 sm:p-5 bg-slate-50 dark:bg-slate-850 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
             {/* Beam search selector */}
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4 text-slate-400" />
-              <span>Beam Search:</span>
+              <span>Decoding:</span>
               <select
                 value={numBeams}
                 onChange={(e) => setNumBeams(Number(e.target.value))}
                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
               >
-                <option value={1}>1 (Greedy)</option>
-                <option value={2}>2 Beams (Fast)</option>
-                <option value={4}>4 Beams (Quality)</option>
+                <option value={1}>Greedy (Fastest)</option>
+                <option value={2}>2 Beams (Balanced)</option>
+                <option value={4}>4 Beams (Highest Quality)</option>
               </select>
             </div>
 
@@ -328,6 +327,11 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
               />
               <span>Generate Alternatives</span>
             </label>
+
+            <span className="hidden xl:inline-flex items-center gap-1 text-[11px] text-slate-400">
+              <HelpCircle className="w-3.5 h-3.5 text-brand-500" />
+              <span>Automatic Truecasing & anti-hallucination enabled</span>
+            </span>
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
