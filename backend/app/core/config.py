@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 
 class Settings(BaseModel):
-    PROJECT_NAME: str = "LinguaAI"
+    PROJECT_NAME: str = "PolyTrans"
     VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
 

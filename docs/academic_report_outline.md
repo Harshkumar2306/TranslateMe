@@ -1,5 +1,5 @@
 # Academic Project Report Outline
-## LinguaAI: Universal Multilingual Neural Machine Translation System Using Transformer-Based Deep Learning
+## PolyTrans: Universal Multilingual Neural Machine Translation System Using Transformer-Based Deep Learning
 
 ---
 
