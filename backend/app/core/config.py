@@ -21,7 +21,7 @@ class Settings(BaseModel):
     MAX_OUTPUT_TOKENS: int = 128
 
     # Database
-    DATABASE_URL: str = "sqlite:///./lingua_ai.db"
+    DATABASE_URL: str = "sqlite:///./translateme.db"
 
     # Supported Languages
     SUPPORTED_LANGUAGES: list[str] = ["en", "hi", "ta", "te"]

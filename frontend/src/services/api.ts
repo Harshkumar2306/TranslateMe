@@ -14,7 +14,7 @@ export async function translateText(
   targetLanguage: string,
   numBeams: number = 2,
   returnAlternatives: boolean = false,
-  modelType: 'nllb' | 'custom' = 'nllb'
+  modelType: string = 'custom'
 ): Promise<TranslationResult> {
   const res = await fetch(`${API_BASE}/translate`, {
     method: 'POST',

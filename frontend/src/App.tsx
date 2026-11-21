@@ -65,8 +65,8 @@ export function App() {
           <TranslatorPage
             languages={languages}
             initialSourceText={reuseData?.text || ''}
-            initialSourceLang={reuseData?.src || 'eng_Latn'}
-            initialTargetLang={reuseData?.tgt || 'hin_Deva'}
+            initialSourceLang={reuseData?.src || 'en'}
+            initialTargetLang={reuseData?.tgt || 'hi'}
           />
         )}
 

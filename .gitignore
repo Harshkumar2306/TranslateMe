@@ -53,7 +53,8 @@ datasets/processed/*
 # Database
 *.db
 *.sqlite3
-backend/lingua_ai.db
+backend/translateme.db
+lingua_ai.db
 
 # Logs & Evaluation artifacts
 *.log

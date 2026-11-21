@@ -10,8 +10,8 @@ interface DocumentTranslatorPageProps {
 
 export const DocumentTranslatorPage: React.FC<DocumentTranslatorPageProps> = ({ languages }) => {
   const [file, setFile] = useState<File | null>(null);
-  const [sourceLang, setSourceLang] = useState('eng_Latn');
-  const [targetLang, setTargetLang] = useState('hin_Deva');
+  const [sourceLang, setSourceLang] = useState('en');
+  const [targetLang, setTargetLang] = useState('hi');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{

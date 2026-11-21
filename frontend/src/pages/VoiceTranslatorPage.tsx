@@ -11,8 +11,8 @@ interface VoiceTranslatorPageProps {
 export const VoiceTranslatorPage: React.FC<VoiceTranslatorPageProps> = ({ languages }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const [sourceLang, setSourceLang] = useState('eng_Latn');
-  const [targetLang, setTargetLang] = useState('hin_Deva');
+  const [sourceLang, setSourceLang] = useState('en');
+  const [targetLang, setTargetLang] = useState('hi');
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +28,7 @@ export const VoiceTranslatorPage: React.FC<VoiceTranslatorPageProps> = ({ langua
       recognition.continuous = true;
       recognition.interimResults = true;
 
-      // Map NLLB code to BCP-47 locale
+      // Map language code to BCP-47 locale
       const currentSource = languages.find(l => l.code === sourceLang);
       recognition.lang = currentSource?.iso || 'en-US';
 

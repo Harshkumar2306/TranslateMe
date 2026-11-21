@@ -32,7 +32,7 @@ SAMPLE_EN_HI_CORPUS = [
     ("Tamil and Telugu are classical languages with rich literary traditions.", "तमिल और तेलुगु समृद्ध साहित्यिक परंपराओं वाली शास्त्रीय भाषाएं हैं।"),
     ("The evaluation report demonstrates competitive performance across test benchmarks.", "मूल्यांकन रिपोर्ट परीक्षण बेंचमार्क में प्रतिस्पर्धी प्रदर्शन को प्रदर्शित करती है।"),
     ("Attention Is All You Need introduced the breakthrough Transformer architecture.", "अटेंशन इज़ ऑल यू नीड ने अभूतपूर्व ट्रांसफॉर्मर आर्किटेक्चर की शुरुआत की।"),
-    ("Welcome to LinguaAI universal neural machine translation platform.", "लिंगुआएआई यूनिवर्सल न्यूरल मशीन ट्रांसलेशन प्लेटफॉर्म में आपका स्वागत है।"),
+    ("Welcome to TranslateMe universal neural machine translation platform.", "ट्रांसलेटमी यूनिवर्सल न्यूरल मशीन ट्रांसलेशन प्लेटफॉर्म में आपका स्वागत है।"),
 ]
 
 

@@ -16,7 +16,7 @@ from backend.app.core.device import get_device
 
 logger = logging.getLogger(__name__)
 
-# Transparent mapping between NLLB/Flores codes and ISO-639 codes
+# Transparent mapping between legacy code aliases and canonical ISO-639 codes
 CODE_MAP = {
     "eng_Latn": "en",
     "hin_Deva": "hi",

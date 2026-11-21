@@ -5,7 +5,7 @@ Database Session and Engine Initialization for SQLite
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "sqlite:///./lingua_ai.db"
+DATABASE_URL = "sqlite:///./translateme.db"
 
 engine = create_engine(
     DATABASE_URL,
