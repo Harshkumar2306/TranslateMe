@@ -12,9 +12,9 @@ matplotlib.use("Agg")  # Non-interactive backend
 import matplotlib.pyplot as plt
 
 from backend.app.services.nllb_service import translation_engine
-from models.custom_transformer import Seq2SeqTransformer
-from training.train_custom_transformer import SimpleVocab
-from evaluation.metrics import compute_sacrebleu, compute_chrf, benchmark_translation_speed
+from ml_lab.custom_transformer import Seq2SeqTransformer
+from ml_lab.training.train_custom_transformer import SimpleVocab
+from ml_lab.evaluation.metrics import compute_sacrebleu, compute_chrf, benchmark_translation_speed
 
 # Benchmark test parallel test suite (English -> Hindi)
 TEST_SUITE = [
@@ -72,7 +72,7 @@ def evaluate_nllb_pretrained(test_data):
 
 
 def evaluate_custom_transformer():
-    checkpoint_path = "models/checkpoints/custom_transformer_checkpoint.pt"
+    checkpoint_path = "ml_lab/checkpoints/custom_transformer_checkpoint.pt"
     if not os.path.exists(checkpoint_path):
         print(f"Custom transformer checkpoint not found at {checkpoint_path}. Skipping.")
         return None
@@ -128,7 +128,7 @@ def evaluate_custom_transformer():
     }
 
 
-def generate_comparison_charts(results: list, output_dir: str = "evaluation/results"):
+def generate_comparison_charts(results: list, output_dir: str = "ml_lab/evaluation/results"):
     os.makedirs(output_dir, exist_ok=True)
     valid_results = [r for r in results if r is not None]
     if not valid_results:
@@ -161,7 +161,7 @@ def generate_comparison_charts(results: list, output_dir: str = "evaluation/resu
 
 
 def run_full_evaluation():
-    os.makedirs("evaluation/results", exist_ok=True)
+    os.makedirs("ml_lab/evaluation/results", exist_ok=True)
     res_nllb = evaluate_nllb_pretrained(TEST_SUITE)
     res_custom = evaluate_custom_transformer()
 
@@ -176,7 +176,7 @@ def run_full_evaluation():
 
     generate_comparison_charts([res_nllb, res_custom])
 
-    with open("evaluation/results/evaluation_results.json", "w", encoding="utf-8") as f:
+    with open("ml_lab/evaluation/results/evaluation_results.json", "w", encoding="utf-8") as f:
         json.dump(all_results, f, indent=2, ensure_ascii=False)
 
     print("\nEvaluation completed. Results saved to evaluation/results/evaluation_results.json")

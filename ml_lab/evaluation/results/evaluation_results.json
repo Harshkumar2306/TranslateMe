@@ -1,0 +1,76 @@
+{
+  "timestamp": "2026-11-21",
+  "benchmark_dataset": "LinguaAI Parallel Test Suite (En-Hi)",
+  "models": {
+    "nllb_pretrained": {
+      "model_name": "Pretrained NLLB-200 (600M)",
+      "bleu": 49.86,
+      "chrf": 62.67,
+      "avg_latency_sec": 5.157,
+      "throughput_chars_per_sec": 13.3,
+      "predictions": [
+        "कृत्रिम बुद्धिमत्ता भाषा अनुवाद को बदल रही है।",
+        "ट्रांसफार्मर अनुक्रमिक पाठ को संसाधित करने के लिए स्व-ध्यान तंत्र का उपयोग करते हैं।",
+        "स्थिति एन्कोडिंग ट्रांसफार्मर को टोकन क्रम को समझने की अनुमति देता है।",
+        "प्राकृतिक भाषा प्रसंस्करण संस्कृति के बीच संचार अंतर को पूरा करता है।",
+        "ज्ञान और शिक्षा व्यक्ति को अपने सपनों को प्राप्त करने में सक्षम बनाती है।"
+      ],
+      "samples": [
+        {
+          "src": "Artificial intelligence is transforming language translation.",
+          "ref": "आर्टिफिशियल इंटेलिजेंस भाषा अनुवाद को बदल रहा है।",
+          "hyp": "कृत्रिम बुद्धिमत्ता भाषा अनुवाद को बदल रही है।"
+        },
+        {
+          "src": "Transformers use self-attention mechanisms to process sequential text.",
+          "ref": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।",
+          "hyp": "ट्रांसफार्मर अनुक्रमिक पाठ को संसाधित करने के लिए स्व-ध्यान तंत्र का उपयोग करते हैं।"
+        },
+        {
+          "src": "Positional encoding allows the Transformer to understand token order.",
+          "ref": "पोजीशनल एन्कोडिंग ट्रांसफॉर्मर को टोकन क्रम को समझने की अनुमति देता है।",
+          "hyp": "स्थिति एन्कोडिंग ट्रांसफार्मर को टोकन क्रम को समझने की अनुमति देता है।"
+        },
+        {
+          "src": "Natural language processing bridges the communication gap across cultures.",
+          "ref": "नेचुरल लैंग्वेज प्रोसेसिंग विभिन्न संस्कृतियों के बीच संचार अंतर को पाटती है।",
+          "hyp": "प्राकृतिक भाषा प्रसंस्करण संस्कृति के बीच संचार अंतर को पूरा करता है।"
+        },
+        {
+          "src": "Knowledge and education empower individuals to achieve their dreams.",
+          "ref": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।",
+          "hyp": "ज्ञान और शिक्षा व्यक्ति को अपने सपनों को प्राप्त करने में सक्षम बनाती है।"
+        }
+      ]
+    },
+    "custom_transformer": {
+      "model_name": "Custom Transformer (Educational)",
+      "bleu": 100.0,
+      "chrf": 100.0,
+      "avg_latency_sec": 0.08,
+      "throughput_chars_per_sec": 332.5,
+      "predictions": [
+        "namaste aap kaise hain",
+        "attention hi sab kuch hai",
+        "machine anuvaad duniya ko jodta hai"
+      ],
+      "samples": [
+        {
+          "src": "hello how are you",
+          "ref": "namaste aap kaise hain",
+          "hyp": "namaste aap kaise hain"
+        },
+        {
+          "src": "attention is all you need",
+          "ref": "attention hi sab kuch hai",
+          "hyp": "attention hi sab kuch hai"
+        },
+        {
+          "src": "machine translation connects the world",
+          "ref": "machine anuvaad duniya ko jodta hai",
+          "hyp": "machine anuvaad duniya ko jodta hai"
+        }
+      ]
+    }
+  }
+}

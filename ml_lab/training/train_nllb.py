@@ -13,7 +13,7 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, get_linear_schedule_with_warmup
 
 from backend.app.core.device import get_device
-from training.dataset_loader import load_parallel_corpus, prepare_dataset_splits
+from ml_lab.training.dataset_loader import load_parallel_corpus, prepare_dataset_splits
 
 
 class TranslationDataset(Dataset):
@@ -171,8 +171,8 @@ def run_finetuning(config_path: str = "training/config.yaml", max_steps: int = N
             break
 
     # Save training history
-    os.makedirs("evaluation/results", exist_ok=True)
-    with open("evaluation/results/nllb_finetuning_history.json", "w") as f:
+    os.makedirs("ml_lab/evaluation/results", exist_ok=True)
+    with open("ml_lab/evaluation/results/nllb_finetuning_history.json", "w") as f:
         json.dump(history, f, indent=2)
 
     print("\nFine-tuning completed successfully!")

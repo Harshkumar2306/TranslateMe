@@ -114,36 +114,33 @@ The primary practical translation engine is Meta AI's **NLLB-200** (`facebook/nl
 ## 7. Directory Structure
 
 ```
-DL Project/
-├── backend/
+LinguaAI/
+├── frontend/             # React 18 + TypeScript + Vite UI
+│   ├── src/
+│   │   ├── pages/        # Translator, Voice, Documents, History, DL Lab, Analytics
+│   │   ├── components/   # Navbar, Footer, LanguageSelector
+│   │   └── services/     # API client
+│   └── package.json
+│
+├── backend/              # FastAPI REST Server
 │   ├── app/
-│   │   ├── api/routes.py          # REST endpoints
-│   │   ├── core/                  # Hardware device & app configuration
-│   │   ├── database/              # SQLite session & engine
-│   │   ├── models/                # SQLAlchemy history schema
-│   │   ├── schemas/               # Pydantic request/response models
-│   │   ├── services/              # NLLB engine, language detector, document parser
-│   │   └── main.py                # FastAPI entrypoint
+│   │   ├── api/routes.py # All endpoints (/translate, /languages, /history, etc.)
+│   │   ├── services/     # NLLB translation engine, Truecasing, Language detector
+│   │   ├── database/     # SQLite ORM session
+│   │   ├── models/       # Database history schema
+│   │   └── main.py       # Server entrypoint
 │   └── requirements.txt
-├── models/
-│   ├── custom_transformer/        # From-scratch PyTorch Transformer
-│   ├── pretrained/
-│   └── checkpoints/               # Trained model checkpoints
-├── training/
-│   ├── dataset_loader.py          # Bilingual corpora loader & splitting
-│   ├── preprocessing.py           # Unicode NFC cleaning & filtering
-│   ├── train_custom_transformer.py# PyTorch training loop with Noam scheduler
-│   ├── train_nllb.py              # Multilingual fine-tuning pipeline
-│   └── config.yaml                # Hyperparameters
-├── evaluation/
-│   ├── metrics.py                 # SacreBLEU & chrF++ computation
-│   ├── evaluate.py                # Evaluation benchmarks & chart generator
-│   └── results/                   # JSON benchmark reports & figures
-├── datasets/                      # Raw and processed parallel corpora
-├── notebooks/                     # Interactive Jupyter exploration notebooks
-├── tests/                         # Pytest test suite
-├── docs/                          # Architecture, model, dataset, & academic report
-├── frontend/                      # React TypeScript Vite application
+│
+├── ml_lab/               # Machine Learning Research & Experiments
+│   ├── custom_transformer/# From-scratch PyTorch Transformer architecture
+│   ├── training/         # Fine-tuning & educational training scripts
+│   ├── evaluation/       # SacreBLEU & chrF++ benchmark suite
+│   ├── datasets/         # Bilingual parallel corpora (train/val/test splits)
+│   ├── notebooks/        # Interactive exploration Jupyter notebooks
+│   └── checkpoints/      # Saved trained model weights (.pt)
+│
+├── docs/                 # Academic report outline & system architecture
+├── tests/                # Automated pytest test suite
 └── README.md
 ```
 

@@ -13,8 +13,8 @@ model:
 # Dataset Configuration
 dataset:
   name: "sample_parallel_corpus"
-  raw_data_dir: "datasets/raw"
-  processed_data_dir: "datasets/processed"
+  raw_data_dir: "ml_lab/datasets/raw"
+  processed_data_dir: "ml_lab/datasets/processed"
   train_split: 0.8
   val_split: 0.1
   test_split: 0.1
@@ -24,7 +24,7 @@ dataset:
 
 # Hyperparameters
 training:
-  output_dir: "models/checkpoints/nllb_finetuned"
+  output_dir: "ml_lab/checkpoints/nllb_finetuned"
   learning_rate: 5.0e-5
   weight_decay: 0.01
   num_train_epochs: 3

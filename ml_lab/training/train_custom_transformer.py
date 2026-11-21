@@ -12,7 +12,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from typing import List, Tuple, Dict
 
-from models.custom_transformer import Seq2SeqTransformer
+from ml_lab.custom_transformer import Seq2SeqTransformer
 
 
 class SimpleVocab:
@@ -243,10 +243,10 @@ def train_custom_model(
     print(f"Generated: {predicted_text}")
 
     # 7. Save Checkpoint & Results
-    os.makedirs("models/checkpoints", exist_ok=True)
-    os.makedirs("evaluation/results", exist_ok=True)
+    os.makedirs("ml_lab/checkpoints", exist_ok=True)
+    os.makedirs("ml_lab/evaluation/results", exist_ok=True)
 
-    checkpoint_path = "models/checkpoints/custom_transformer_checkpoint.pt"
+    checkpoint_path = "ml_lab/checkpoints/custom_transformer_checkpoint.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
         "src_vocab": src_vocab.w2i,
@@ -261,7 +261,7 @@ def train_custom_model(
     }, checkpoint_path)
     print(f"Saved custom model checkpoint to: {checkpoint_path}")
 
-    with open("evaluation/results/custom_transformer_history.json", "w") as f:
+    with open("ml_lab/evaluation/results/custom_transformer_history.json", "w") as f:
         json.dump(history, f, indent=2)
 
     return history

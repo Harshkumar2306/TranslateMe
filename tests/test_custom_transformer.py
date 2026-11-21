@@ -4,7 +4,7 @@ Unit tests for Custom Transformer implementation
 
 import pytest
 import torch
-from models.custom_transformer import (
+from ml_lab.custom_transformer import (
     TokenEmbedding,
     PositionalEncoding,
     ScaledDotProductAttention,
@@ -53,7 +53,6 @@ def test_scaled_dot_product_attention():
 
     assert out.shape == (batch_size, n_heads, seq_len, d_k)
     assert weights.shape == (batch_size, n_heads, seq_len, seq_len)
-    # Check that attention weights sum to 1 across key dimension
     assert torch.allclose(weights.sum(dim=-1), torch.ones(batch_size, n_heads, seq_len), atol=1e-5)
 
 
@@ -73,13 +72,9 @@ def test_multi_head_attention():
 def test_causal_mask():
     tgt = torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]])
     mask = make_tgt_mask(tgt, pad_idx=0)
-    # Shape should be (batch_size, 1, seq_len, seq_len)
     assert mask.shape == (2, 1, 4, 4)
-    # Token at index 0 should NOT be able to attend to token at index 1
     assert mask[0, 0, 0, 1] == False
-    # Token at index 1 should be able to attend to token at index 0
     assert mask[0, 0, 1, 0] == True
-    # Padding token at index 3 in first sequence should be masked out
     assert mask[0, 0, 3, 3] == False
 
 

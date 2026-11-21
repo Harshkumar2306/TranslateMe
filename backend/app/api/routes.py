@@ -240,23 +240,31 @@ def get_deep_learning_lab_info():
     """Provides architectural metrics, training history, and evaluation data for the DL Lab."""
     # Read custom transformer history if available
     custom_history = None
-    history_file = "evaluation/results/custom_transformer_history.json"
-    if os.path.exists(history_file):
-        try:
-            with open(history_file, "r") as f:
-                custom_history = json.load(f)
-        except Exception:
-            pass
+    for history_file in [
+        "ml_lab/evaluation/results/custom_transformer_history.json",
+        "evaluation/results/custom_transformer_history.json"
+    ]:
+        if os.path.exists(history_file):
+            try:
+                with open(history_file, "r") as f:
+                    custom_history = json.load(f)
+                break
+            except Exception:
+                pass
 
     # Read evaluation benchmark results if available
     benchmark_results = None
-    eval_file = "evaluation/results/evaluation_results.json"
-    if os.path.exists(eval_file):
-        try:
-            with open(eval_file, "r") as f:
-                benchmark_results = json.load(f)
-        except Exception:
-            pass
+    for eval_file in [
+        "ml_lab/evaluation/results/evaluation_results.json",
+        "evaluation/results/evaluation_results.json"
+    ]:
+        if os.path.exists(eval_file):
+            try:
+                with open(eval_file, "r") as f:
+                    benchmark_results = json.load(f)
+                break
+            except Exception:
+                pass
 
     return {
         "custom_transformer": {
