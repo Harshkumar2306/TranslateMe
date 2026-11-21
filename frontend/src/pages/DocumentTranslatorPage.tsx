@@ -68,7 +68,7 @@ export const DocumentTranslatorPage: React.FC<DocumentTranslatorPageProps> = ({ 
           Document Translation
         </h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-          Upload TXT or PDF documents. The NLLB-200 Transformer parses paragraphs, translates in chunks, and preserves paragraph structure.
+          Upload TXT or PDF documents. The Custom Multilingual Transformer parses paragraphs, translates in chunks, and preserves paragraph structure.
         </p>
       </div>
 

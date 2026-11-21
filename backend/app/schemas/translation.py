@@ -74,6 +74,13 @@ class ModelInfoResponse(BaseModel):
     license: str
     attribution: str
     limitations: List[str]
+    parameters: Optional[str] = None
+    layers: Optional[int] = None
+    attention_heads: Optional[int] = None
+    d_model: Optional[int] = None
+    d_ff: Optional[int] = None
+    vocab_size: Optional[str] = None
+    tokenizer_type: Optional[str] = None
 
 
 class AnalyticsResponse(BaseModel):

@@ -61,35 +61,26 @@ export interface LabInfo {
     attention_heads: number;
     d_model: number;
     d_ff: number;
+    parameters?: number;
+    shared_vocab_size?: number;
     training_history?: {
       epochs: number[];
-      loss: number[];
-      lr: number[];
+      train_loss?: number[];
+      val_loss?: number[];
+      learning_rates?: number[];
+      loss?: number[];
+      lr?: number[];
     };
   };
-  evaluation_benchmark?: {
-    timestamp: string;
-    benchmark_dataset: string;
-    models: {
-      nllb_pretrained?: {
-        model_name: string;
-        bleu: number;
-        chrf: number;
-        avg_latency_sec: number;
-        throughput_chars_per_sec: number;
-        samples: { src: string; ref: string; hyp: string }[];
-      };
-      custom_transformer?: {
-        model_name: string;
-        bleu: number;
-        chrf: number;
-        avg_latency_sec: number;
-        throughput_chars_per_sec: number;
-        samples: { src: string; ref: string; hyp: string }[];
-      };
-    };
-  };
-  transformer_components: {
+  evaluation_benchmark?: Record<string, {
+    direction: string;
+    bleu: number;
+    chrf: number;
+    avg_latency_sec: number;
+    throughput_chars_per_sec: number;
+    samples?: { source: string; reference: string; hypothesis: string }[];
+  }>;
+  transformer_components?: {
     name: string;
     formula: string;
     description: string;

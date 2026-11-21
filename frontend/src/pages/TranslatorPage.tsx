@@ -27,8 +27,8 @@ interface TranslatorPageProps {
 export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   languages,
   initialSourceText = '',
-  initialSourceLang = 'eng_Latn',
-  initialTargetLang = 'hin_Deva',
+  initialSourceLang = 'en',
+  initialTargetLang = 'hi',
 }) => {
   const [sourceText, setSourceText] = useState(initialSourceText);
   const [sourceLang, setSourceLang] = useState(initialSourceLang);
@@ -37,8 +37,8 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<'nllb' | 'custom'>('nllb');
-  const [numBeams, setNumBeams] = useState(4);
+  const [selectedModel, setSelectedModel] = useState<'custom'>('custom');
+  const [numBeams, setNumBeams] = useState(2);
   const [showAlternatives, setShowAlternatives] = useState(true);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
@@ -61,7 +61,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         targetLang,
         numBeams,
         showAlternatives,
-        selectedModel
+        'custom'
       );
       setResult(res);
     } catch (err: any) {
@@ -110,90 +110,48 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     }
   };
 
-  // Quick preset trials
-  const nllbPresets = [
-    { label: 'English → Hindi ("i am harsh kumar")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'i am harsh kumar' },
-    { label: 'English → Hindi ("what is your name")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
-    { label: 'English → Hindi ("welcome to TranslateMe")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to TranslateMe' },
-    { label: 'Hindi → Tamil', src: 'hin_Deva', tgt: 'tam_Taml', text: 'नमस्ते, आप कैसे हैं?' },
-    { label: 'Tamil → French', src: 'tam_Taml', tgt: 'fra_Latn', text: 'வணக்கம், எப்படி இருக்கிறீர்கள்?' },
-    { label: 'English → Telugu', src: 'eng_Latn', tgt: 'tel_Telu', text: 'i am harsh kumar' },
-  ];
-
+  // Quick preset trials for the 4 supported languages
   const customPresets = [
-    { label: 'hello how are you', src: 'eng_Latn', tgt: 'hin_Deva', text: 'hello how are you' },
-    { label: 'what is your name', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
-    { label: 'good morning', src: 'eng_Latn', tgt: 'hin_Deva', text: 'good morning' },
-    { label: 'thank you very much', src: 'eng_Latn', tgt: 'hin_Deva', text: 'thank you very much' },
-    { label: 'welcome to my transformer', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to my transformer' },
+    { label: 'English → Hindi', src: 'en', tgt: 'hi', text: 'TranslateMe is an open-source multilingual neural machine translation engine.' },
+    { label: 'English → Tamil', src: 'en', tgt: 'ta', text: 'Machine learning models learn patterns from training data.' },
+    { label: 'English → Telugu', src: 'en', tgt: 'te', text: 'Deep learning models use multi-layer neural networks.' },
+    { label: 'Hindi → English', src: 'hi', tgt: 'en', text: 'नमस्ते, आप कैसे हैं?' },
+    { label: 'Tamil → English', src: 'ta', tgt: 'en', text: 'செயற்கை நுண்ணறிவு மனிதர்களின் திறனை மேம்படுத்துகிறது.' },
+    { label: 'Telugu → English', src: 'te', tgt: 'en', text: 'కంప్యూటర్ సైన్స్ ఆధునిక ప్రపంచాన్ని మారుస్తుంది.' },
   ];
-
-  const activePresets = selectedModel === 'custom' ? customPresets : nllbPresets;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Hero Header */}
       <div className="text-center mb-8">
         <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          Universal Multilingual Translation
+          From-Scratch Multilingual Transformer
         </h1>
         <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          Choose between Meta AI's 200-language NLLB-200 Transformer or your own custom Transformer built from scratch in PyTorch.
+          100% custom PyTorch encoder-decoder Transformer. Randomly initialized, trained from scratch on parallel corpora with BPE subwords. Zero pretrained weights.
         </p>
 
-        {/* Model Engine Selector */}
+        {/* Model Architecture Badges */}
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedModel('nllb');
-              setResult(null);
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold transition-all border active:scale-95 ${
-              selectedModel === 'nllb'
-                ? 'bg-brand-600 text-white border-brand-500 shadow-md shadow-brand-500/25 ring-2 ring-brand-500/20'
-                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850'
-            }`}
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>NLLB-200 (615M Pretrained)</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedModel('custom');
-              setResult(null);
-              setSourceLang('eng_Latn');
-              setTargetLang('hin_Deva');
-            }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold transition-all border active:scale-95 ${
-              selectedModel === 'custom'
-                ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-violet-500 shadow-md shadow-violet-500/25 ring-2 ring-violet-500/20'
-                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-850'
-            }`}
-          >
-            <Cpu className="w-4 h-4 text-violet-300" />
-            <span>My Custom Transformer (From Scratch)</span>
+          <div className="flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold bg-gradient-to-r from-violet-600 to-indigo-600 text-white border border-violet-500 shadow-md shadow-violet-500/25">
+            <Cpu className="w-4 h-4 text-violet-200" />
+            <span>Custom Seq2Seq Transformer (Vaswani et al., 2017)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-800/90 text-white font-extrabold uppercase tracking-wider">
-              PyTorch
+              6.03M Params
             </span>
-          </button>
-        </div>
-
-        {selectedModel === 'custom' && (
-          <div className="mt-3 inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-50 dark:bg-violet-950/60 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-xs animate-in fade-in duration-200">
-            <BrainCircuit className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>Running your own custom PyTorch Seq2SeqTransformer (d_model=128, 4 heads, 2 layers, 100% local PyTorch)</span>
           </div>
-        )}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
+            <Layers className="w-3.5 h-3.5 text-indigo-500" />
+            <span>3 Enc / 3 Dec • 4 Heads • d_model=256 • 2,000 BPE Subwords</span>
+          </div>
+        </div>
 
         {/* Quick Test Presets */}
         <div className="mt-4 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1 flex-shrink-0">
-            {selectedModel === 'custom' ? 'Custom Samples:' : 'Quick Tests:'}
+            Parallel Presets:
           </span>
-          {activePresets.map((p, idx) => (
+          {customPresets.map((p, idx) => (
             <button
               key={idx}
               onClick={() => {
@@ -201,7 +159,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
                 setTargetLang(p.tgt);
                 setSourceText(p.text);
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-brand-500 hover:text-brand-600 transition-colors shadow-2xs whitespace-nowrap flex-shrink-0 active:scale-95"
+              className="px-3 py-1.5 text-xs font-medium rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-violet-500 hover:text-violet-600 transition-colors shadow-2xs whitespace-nowrap flex-shrink-0 active:scale-95"
             >
               {p.label}
             </button>
@@ -345,15 +303,9 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
 
               {result && (
                 <div className="flex flex-wrap items-center gap-2">
-                  {result.model_name && result.model_name.includes("Custom") ? (
-                    <span className="bg-violet-100 text-violet-700 dark:bg-violet-950/80 dark:text-violet-300 border border-violet-300 dark:border-violet-800 px-2 py-0.5 rounded text-[11px] font-bold">
-                      Custom PyTorch Model
-                    </span>
-                  ) : (
-                    <span className="bg-brand-50 text-brand-700 dark:bg-brand-950/80 dark:text-brand-300 border border-brand-200 dark:border-brand-800 px-2 py-0.5 rounded text-[11px] font-semibold">
-                      NLLB-200
-                    </span>
-                  )}
+                  <span className="bg-violet-100 text-violet-700 dark:bg-violet-950/80 dark:text-violet-300 border border-violet-300 dark:border-violet-800 px-2 py-0.5 rounded text-[11px] font-bold">
+                    Custom PyTorch Transformer
+                  </span>
                   <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded text-[11px] font-mono">
                     <Clock className="w-3 h-3 text-brand-500" />
                     {result.inference_time}s

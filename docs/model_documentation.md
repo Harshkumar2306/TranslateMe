@@ -1,43 +1,77 @@
-# Model Documentation & Technical Specifications
+# Model Documentation: Custom Multilingual Seq2Seq Transformer
 
-## 1. NLLB-200 Multilingual Transformer
+## 1. Model Overview
 
-### Architecture
-- **Model Family**: No Language Left Behind (NLLB)
-- **Checkpoint**: `facebook/nllb-200-distilled-600M`
-- **Architecture**: Sequence-to-Sequence Encoder-Decoder Transformer
-- **Number of Parameters**: ~615 Million
-- **Encoder Layers**: 12
-- **Decoder Layers**: 12
-- **Attention Heads**: 16
-- **Hidden Dimension ($d_{model}$)**: 1024
-- **Feed-Forward Dimension ($d_{ff}$)**: 4096
-- **Tokenizer**: SentencePiece with 256,204 tokens
+The TranslateMe translation engine is a **from-scratch multilingual Sequence-to-Sequence Transformer** built in pure PyTorch and trained on 4-way parallel Indic-English language corpora.
 
-### Language Coverage
-NLLB-200 supports 202 languages and distinct scripts, including all major Indian languages (Hindi `hin_Deva`, Tamil `tam_Taml`, Telugu `tel_Telu`, Malayalam `mal_Mlym`, Kannada `kan_Knda`, Bengali `ben_Beng`, Marathi `mar_Deva`, Gujarati `guj_Gujr`, Punjabi `pan_Guru`, Urdu `urd_Arab`, Odia `ory_Orya`, Assamese `asm_Beng`, Sanskrit `san_Deva`) and global languages (English, French, Spanish, German, Japanese, Korean, Chinese, Arabic, Russian).
-
-### Research Attribution & License
-- **Authors**: NLLB Team, Marta R. Costa-jussà, James Cross, Onur Çelebi, et al.
-- **Organization**: Meta AI Research (2022)
-- **Publication**: *No Language Left Behind: Scaling Human-Centered Machine Translation*, arXiv:2207.04672.
-- **License**: Creative Commons Attribution-NonCommercial 4.0 International (CC-BY-NC 4.0).
+| Attribute | Specification |
+| :--- | :--- |
+| **Model Architecture** | Standard Encoder-Decoder Transformer (Vaswani et al., 2017) |
+| **Implementation** | `ml_lab/custom_transformer/` (Pure PyTorch modules) |
+| **Trainable Parameters** | **6,033,408 (6.03M)** |
+| **Pretrained Weights** | **Zero (Random Gaussian Initialization $\mathcal{N}(0, 1)$)** |
+| **Vocabulary Size** | 2,000 Byte-Pair Encoded (BPE) subwords |
+| **Supported Languages** | English (`en`), Hindi (`hi`), Tamil (`ta`), Telugu (`te`) |
+| **Embedding Dimension ($d_{\text{model}}$)** | 256 |
+| **Feed-Forward Dimension ($d_{\text{ff}}$)** | 1024 |
+| **Encoder Layers ($N_{\text{enc}}$)** | 3 |
+| **Decoder Layers ($N_{\text{dec}}$)** | 3 |
+| **Attention Heads ($h$)** | 4 ($d_k = d_v = 64$) |
+| **Dropout Rate** | 0.1 |
+| **Weight Tying** | Shared input subword embeddings & output linear generator |
+| **Target Conditioning** | Special control tokens: `<2en>`, `<2hi>`, `<2ta>`, `<2te>` |
+| **Inference Decoding** | Autoregressive Beam Search ($k=1$ to $4$) + Repetition Penalty |
 
 ---
 
-## 2. Custom PyTorch Transformer
+## 2. Parameter Calculation Breakdown
 
-### Architecture
-- **Reference**: Vaswani et al. (2017), *Attention Is All You Need*, NeurIPS 2017.
-- **Module**: `models/custom_transformer/`
-- **Components**:
-  - `ScaledDotProductAttention`
-  - `MultiHeadAttention`
-  - `PositionalEncoding`
-  - `TransformerEncoder`
-  - `TransformerDecoder`
-  - `Seq2SeqTransformer`
-- **Optimization**:
-  - Optimizer: Adam ($\beta_1 = 0.9, \beta_2 = 0.98, \epsilon = 10^{-9}$)
-  - Learning Rate Schedule: Noam warmup scheduler ($lr = d_{model}^{-0.5} \cdot \min(step^{-0.5}, step \cdot warmup^{-1.5})$)
-  - Loss Function: Cross-Entropy with padding token masking
+The model's **6,033,408 parameters** are allocated across layers as follows:
+
+1. **Shared Token Embedding & Projection**:
+   $$|V| \times d_{\text{model}} = 2000 \times 256 = 512,000 \text{ weights}$$
+   Output generator bias: $2,000$ weights.
+
+2. **Encoder Stack (3 Layers)**:
+   - Multi-Head Self-Attention ($W_Q, W_K, W_V, W_O$):
+     $$4 \times (256 \times 256 + 256) = 263,168 \text{ per layer}$$
+   - Position-Wise Feed-Forward Network ($W_1, b_1, W_2, b_2$):
+     $$(256 \times 1024 + 1024) + (1024 \times 256 + 256) = 525,568 \text{ per layer}$$
+   - Two Layer Normalization layers:
+     $$2 \times (2 \times 256) = 1,024 \text{ per layer}$$
+   - Total per Encoder layer: $\approx 789,760 \text{ weights} \times 3 = 2,369,280 \text{ weights}$.
+
+3. **Decoder Stack (3 Layers)**:
+   - Masked Self-Attention: $263,168 \text{ per layer}$
+   - Encoder-Decoder Cross-Attention: $263,168 \text{ per layer}$
+   - Feed-Forward Network: $525,568 \text{ per layer}$
+   - Three Layer Normalization layers: $1,536 \text{ per layer}$
+   - Total per Decoder layer: $\approx 1,053,440 \text{ weights} \times 3 = 3,160,320 \text{ weights}$.
+
+4. **Final Layer Normalization**:
+   $$2 \times 256 = 512 \text{ weights}$$
+
+$$\text{Total Trainable Parameters} = 6,033,408$$
+
+---
+
+## 3. Supported Languages & Control Tokens
+
+| Language | ISO Code | Native Name | Script | Direction Token |
+| :--- | :---: | :--- | :--- | :---: |
+| English | `en` | English | Latin | `<2en>` |
+| Hindi | `hi` | हिन्दी | Devanagari | `<2hi>` |
+| Tamil | `ta` | தமிழ் | Tamil | `<2ta>` |
+| Telugu | `te` | తెలుగు | Telugu | `<2te>` |
+
+The target language control token is prepended to the decoder input sequence immediately after the `sos_id` token during both training (teacher forcing) and inference (autoregressive generation).
+
+---
+
+## 4. Software Versions & Reproducibility
+
+- PyTorch: `2.6.0`
+- Tokenizers: `0.21.0`
+- SacreBLEU: `2.6.0`
+- Random Seed: `42`
+- Checkpoint: `ml_lab/checkpoints/custom_multilingual_transformer.pt`

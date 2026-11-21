@@ -1,19 +1,46 @@
-# Dataset Preparation & Preprocessing Pipeline
+# Dataset Preparation & Multilingual Data Pipeline
 
 ## 1. Overview
-TranslateMe includes a dataset curation, cleaning, and partitioning pipeline in `ml_lab/training/` designed to process parallel bilingual corpora.
+The TranslateMe dataset pipeline (`ml_lab/datasets/`) processes 4-way parallel sentences spanning English, Hindi, Tamil, and Telugu. The pipeline is designed for strict data isolation, zero data leakage between splits, and Unicode normalization across diverse Indic scripts.
 
-## 2. Preprocessing & Sanitization Pipeline
-Text cleaning logic is implemented in `training/preprocessing.py`:
-- **Unicode NFC Normalization**: Unifies combining characters into standard precomposed glyphs, critical for Indian languages with complex vowel mats and conjuncts.
-- **Deduplication**: Removes identical source-target sentence pairs.
-- **Empty & Whitespace Sanitization**: Strips excessive carriage returns, tabs, and unprintable characters while keeping punctuation.
-- **Length Ratio Filtering**: Eliminates pairs where word count ratios exceed 3.5:1, avoiding truncated or misaligned sentences.
+---
 
-## 3. Dataset Splits
-Parallel pairs are automatically partitioned into standard splits:
-- **Train Split (80%)**: For model gradient updates
-- **Validation Split (10%)**: For checkpoint selection and early stopping
-- **Test Split (10%)**: Held out for final SacreBLEU and chrF++ evaluations
+## 2. Multilingual Corpus Architecture
 
-All processed files are stored in `datasets/processed/` as clean JSONL files (`train.jsonl`, `val.jsonl`, `test.jsonl`), accompanied by detailed metadata in `dataset_stats.json`.
+The corpus contains parallel tuples $(s_{\text{en}}, s_{\text{hi}}, s_{\text{ta}}, s_{\text{te}})$ covering general conversation, greetings, technology, science, artificial intelligence, education, and daily communication:
+
+| Language | Script | Character Range | Example Sentence |
+| :--- | :--- | :--- | :--- |
+| **English** (`en`) | Latin | `U+0020 - U+007E` | *Artificial intelligence is transforming language translation.* |
+| **Hindi** (`hi`) | Devanagari | `U+0900 - U+097F` | *आर्टिफिशियल इंटेलिजेंस भाषा अनुवाद को बदल रहा है।* |
+| **Tamil** (`ta`) | Tamil | `U+0B80 - U+0BFF` | *செயற்கை நுண்ணறிவு மொழிபெயர்ப்பை மாற்றியமைக்கிறது.* |
+| **Telugu** (`te`) | Telugu | `U+0C00 - U+0C7F` | *కృత్రిమ మేధస్సు భాషా అనువాదాన్ని మారుస్తోంది.* |
+
+---
+
+## 3. Preprocessing and Cleaning Stages
+
+Implemented in `ml_lab/datasets/data_pipeline.py`:
+
+1. **Unicode NFC Normalization**:
+   Transforms decomposed unicode graphemes (e.g., base consonant + combining matra) into canonical precomposed characters:
+   ```python
+   text = unicodedata.normalize("NFC", text.strip())
+   ```
+2. **Whitespace and Character Sanitization**:
+   Removes invisible control codes, BOM headers, and collapses multiple spaces while preserving script-specific punctuation (`।`, `.`, `?`).
+3. **Length and Ratio Filtering**:
+   Discards pairs where character length is $< 3$ or $> 256$, or where length ratio $\frac{\max(L_1, L_2)}{\min(L_1, L_2)} > 2.5$.
+4. **Deduplication**:
+   Hashes normalized source-target pairs to ensure zero duplicate samples.
+
+---
+
+## 4. Strict Split Partitioning & Leakage Prevention
+
+- **Train Split (80%)**: Used solely during the 40-epoch parameter optimization loop.
+- **Validation Split (10%)**: Evaluated at the end of each epoch to determine checkpoint saving.
+- **Held-Out Test Split (10%)**: Stored independently in `HELD_OUT_TEST_SUITE` and used exclusively for post-training SacreBLEU and chrF++ benchmarks.
+
+**Leakage Protection:**
+Tokenizer training corpus is strictly decoupled from the held-out test split, ensuring that test sentences represent unseen sequences.

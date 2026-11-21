@@ -19,14 +19,14 @@ export const Footer: React.FC = () => {
             </div>
             <div className="flex items-center gap-1 text-slate-400">
               <Cpu className="w-3.5 h-3.5" />
-              <span>NLLB-200 + Custom Transformer</span>
+              <span>Custom PyTorch Seq2Seq Transformer (From Scratch)</span>
             </div>
           </div>
         </div>
 
         <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row justify-between items-center gap-2">
           <p>
-            Academic Deep Learning Research Project. Model weights: Meta AI NLLB-200 (CC-BY-NC 4.0 License).
+            Academic Deep Learning Research Project. Model built and trained completely from scratch in PyTorch (Vaswani et al., 2017). Zero pretrained translation weights.
           </p>
           <div className="flex items-center gap-2 text-slate-400">
             <ShieldCheck className="w-3.5 h-3.5" />

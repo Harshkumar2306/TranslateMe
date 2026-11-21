@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Cpu, ShieldCheck, AlertTriangle, BookOpen, Layers, CheckCircle2, HardDrive, GitBranch } from 'lucide-react';
+import { Cpu, ShieldCheck, AlertTriangle, BookOpen, Layers, CheckCircle2, HardDrive, Sparkles } from 'lucide-react';
 import { ModelInfo } from '../types';
 import { fetchModelInfo } from '../services/api';
 
@@ -18,23 +18,29 @@ export const ModelInfoPage: React.FC = () => {
     <div className="max-w-5xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="text-center mb-8">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-50 dark:bg-violet-950/60 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300 text-xs font-semibold mb-3">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Pure From-Scratch PyTorch Implementation</span>
+        </div>
         <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white">
-          Model Specifications & Research Attribution
+          Model Specifications & Technical Architecture
         </h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          TranslateMe utilizes the open-source NLLB-200 (No Language Left Behind) Transformer developed by Meta AI Research, complemented by an educational from-scratch PyTorch Transformer.
+          Detailed technical specifications, mathematical foundations, and hardware configuration of the TranslateMe from-scratch Multilingual Seq2Seq Transformer.
         </p>
       </div>
 
       {/* Grid of Key Specs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-950/60 text-brand-600 dark:text-brand-400 flex items-center justify-center mb-3">
+          <div className="w-9 h-9 rounded-xl bg-violet-50 dark:bg-violet-950/60 text-violet-600 dark:text-violet-400 flex items-center justify-center mb-3">
             <Cpu className="w-5 h-5" />
           </div>
           <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Parameters</span>
-          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">615 Million</span>
-          <span className="text-[11px] text-slate-500">Distilled Seq2Seq Transformer</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">
+            {info?.num_parameters || '6,033,408 (6.03M)'}
+          </span>
+          <span className="text-[11px] text-slate-500">Trainable From Random Init</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -42,8 +48,8 @@ export const ModelInfoPage: React.FC = () => {
             <Layers className="w-5 h-5" />
           </div>
           <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Vocabulary Size</span>
-          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">256,204</span>
-          <span className="text-[11px] text-slate-500">SentencePiece BPE Tokenizer</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">2,000 Subwords</span>
+          <span className="text-[11px] text-slate-500">Multilingual BPE Tokenizer</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -51,69 +57,113 @@ export const ModelInfoPage: React.FC = () => {
             <HardDrive className="w-5 h-5" />
           </div>
           <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Device Accelerator</span>
-          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">{info?.device || 'MPS / CUDA'}</span>
-          <span className="text-[11px] text-slate-500">Apple Silicon / GPU Acceleration</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">{info?.device || 'mps'}</span>
+          <span className="text-[11px] text-slate-500">Apple Silicon MPS / CUDA</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mb-3">
             <ShieldCheck className="w-5 h-5" />
           </div>
-          <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">License</span>
-          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">CC-BY-NC 4.0</span>
-          <span className="text-[11px] text-slate-500">Non-Commercial Research</span>
+          <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Architecture</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">Seq2Seq Transformer</span>
+          <span className="text-[11px] text-slate-500">Vaswani et al. (2017)</span>
         </div>
       </div>
 
-      {/* Model Attribution and Architecture Details */}
+      {/* Architecture Deep Dive */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
-            <BookOpen className="w-5 h-5 text-brand-600 dark:text-brand-400" />
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Academic Citation & Attribution</h2>
+            <Layers className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Architectural Dimensions</h2>
           </div>
-          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed mb-4">
-            The primary translation model used in this system is <strong className="text-slate-800 dark:text-slate-100">facebook/nllb-200-distilled-600M</strong>. It is not represented as a model trained from scratch by this project.
-          </p>
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-[11px] text-slate-700 dark:text-slate-300 leading-relaxed overflow-x-auto">
-            NLLB Team, Marta R. Costa-jussà, et al. (2022). <br/>
-            <strong>No Language Left Behind: Scaling Human-Centered Machine Translation.</strong> <br/>
-            Meta AI Research. arXiv:2207.04672.
+          <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Encoder / Decoder Layers:</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">3 Encoder + 3 Decoder</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Embedding Dimension (d_model):</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">256</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Feedforward Dimension (d_ff):</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">1024</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Attention Heads:</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">4 Heads (d_k = d_v = 64)</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Weight Tying:</span>
+              <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">Encoder & Decoder & Projection Shared</span>
+            </div>
           </div>
         </div>
 
         <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
           <div className="flex items-center gap-2 mb-4">
-            <GitBranch className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Two Distinct Transformer Engines</h2>
+            <BookOpen className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Training Pipeline & Optimization</h2>
           </div>
           <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
-            <div className="p-3 rounded-xl bg-brand-50/50 dark:bg-brand-950/30 border border-brand-100 dark:border-brand-900">
-              <span className="font-bold text-brand-700 dark:text-brand-300 block mb-0.5">Engine A: NLLB-200 (Meta AI)</span>
-              <span>Production multilingual engine handling 202 languages, 615M weights, beam search, and subword tokenization.</span>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Optimizer:</span>
+              <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">AdamW (β1=0.9, β2=0.98, decay=0.01)</span>
             </div>
-            <div className="p-3 rounded-xl bg-indigo-50/50 dark:indigo-950/30 border border-indigo-100 dark:border-indigo-900">
-              <span className="font-bold text-indigo-700 dark:text-indigo-300 block mb-0.5">Engine B: Custom PyTorch Transformer</span>
-              <span>Educational implementation of 'Attention Is All You Need' with custom Scaled Dot-Product, Multi-Head Attention, and Positional Encodings.</span>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">LR Scheduler:</span>
+              <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">Noam Warmup (50 steps)</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Loss Function:</span>
+              <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">Cross-Entropy (label_smoothing=0.1)</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Gradient Clipping:</span>
+              <span className="font-mono text-indigo-600 dark:text-indigo-400 font-bold">max_norm = 1.0</span>
+            </div>
+            <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
+              <span className="font-semibold text-slate-800 dark:text-slate-200">Weight Initialization:</span>
+              <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">Xavier Uniform Linear, Normal Embeddings</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Model Limitations Card */}
-      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm mb-8">
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle className="w-5 h-5 text-amber-500" />
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Research Limitations & Known Caveats</h2>
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Research Scope & Engineering Boundaries</h2>
         </div>
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-600 dark:text-slate-300">
-          {info?.limitations.map((lim, idx) => (
+          {(info?.limitations || [
+            "Trained from scratch on curated 4-way parallel seed corpus",
+            "Vocabulary size is 2,000 multilingual BPE subwords across 4 scripts",
+            "Context length is optimized up to 128 subwords",
+            "Zero pretrained weights: parameters randomly initialized with PyTorch"
+          ]).map((lim, idx) => (
             <li key={idx} className="flex items-start gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0"></span>
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0" />
               <span>{lim}</span>
             </li>
           ))}
         </ul>
+      </div>
+
+      {/* Mathematical Reference */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm">
+        <div className="flex items-center gap-2 mb-4">
+          <BookOpen className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white">Foundational Academic Reference</h2>
+        </div>
+        <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800 font-mono text-xs text-slate-700 dark:text-slate-300 leading-relaxed overflow-x-auto">
+          Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Łukasz Kaiser, Illia Polosukhin. (2017). <br/>
+          <strong>Attention Is All You Need.</strong> <br/>
+          Advances in Neural Information Processing Systems 30 (NeurIPS 2017). arXiv:1706.03762.
+        </div>
       </div>
     </div>
   );

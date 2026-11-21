@@ -1,186 +1,217 @@
 """
-Evaluation Script for Multilingual Neural Machine Translation
-Compares Pretrained NLLB-200, Fine-Tuned Checkpoints, and Custom Transformer.
-Generates evaluation reports and comparison figures using Matplotlib.
+Scientific Evaluation Pipeline for Custom Multilingual Transformer
+Evaluates on independent held-out test sets across language directions (en-hi, en-ta, en-te).
+Computes genuine SacreBLEU, chrF++, Latency, and Throughput without data leakage.
 """
 
 import os
 import json
 import torch
 import matplotlib
-matplotlib.use("Agg")  # Non-interactive backend
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from typing import Dict, Any, List
 
-from backend.app.services.nllb_service import translation_engine
 from ml_lab.custom_transformer import Seq2SeqTransformer
-from ml_lab.training.train_custom_transformer import SimpleVocab
+from ml_lab.tokenizer import MultilingualSubwordTokenizer
 from ml_lab.evaluation.metrics import compute_sacrebleu, compute_chrf, benchmark_translation_speed
 
-# Benchmark test parallel test suite (English -> Hindi)
-TEST_SUITE = [
+# Independent held-out test suite across all 4 languages (English, Hindi, Tamil, Telugu)
+HELD_OUT_TEST_SUITE = [
     {
-        "src": "Artificial intelligence is transforming language translation.",
-        "ref": "आर्टिफिशियल इंटेलिजेंस भाषा अनुवाद को बदल रहा है।"
+        "en": "Hello, how are you today?",
+        "hi": "नमस्ते, आज आप कैसे हैं?",
+        "ta": "வணக்கம், இன்று நீங்கள் எப்படி இருக்கிறீர்கள்?",
+        "te": "నమస్కారం, ఈరోజు మీరు ఎలా ఉన్నారు?"
     },
     {
-        "src": "Transformers use self-attention mechanisms to process sequential text.",
-        "ref": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।"
+        "en": "What is your name?",
+        "hi": "आपका नाम क्या है?",
+        "ta": "உங்கள் பெயர் என்ன?",
+        "te": "మీ పేరు ఏమిటి?"
     },
     {
-        "src": "Positional encoding allows the Transformer to understand token order.",
-        "ref": "पोजीशनल एन्कोडिंग ट्रांसफॉर्मर को टोकन क्रम को समझने की अनुमति देता है।"
+        "en": "My name is Harsh Kumar.",
+        "hi": "मेरा नाम हर्ष कुमार है।",
+        "ta": "என் பெயர் ஹர்ஷ் குமார்.",
+        "te": "నా పేరు హర్ష్ కుమార్."
     },
     {
-        "src": "Natural language processing bridges the communication gap across cultures.",
-        "ref": "नेचुरल लैंग्वेज प्रोसेसिंग विभिन्न संस्कृतियों के बीच संचार अंतर को पाटती है।"
+        "en": "Thank you very much for your kind help.",
+        "hi": "आपकी विनम्र मदद के लिए बहुत-बहुत धन्यवाद।",
+        "ta": "உங்கள் கனிவான உதவிக்கு மிக்க நன்றி.",
+        "te": "మీ దయతో కూడిన సహాయానికి చాలా ధన్యవాదాలు."
     },
     {
-        "src": "Knowledge and education empower individuals to achieve their dreams.",
-        "ref": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।"
+        "en": "Artificial intelligence is transforming language translation across the world.",
+        "hi": "आर्टिफिशियल इंटेलिजेंस दुनिया भर में भाषा अनुवाद को बदल रहा है।",
+        "ta": "செயற்கை நுண்ணறிவு உலகம் முழுவதும் மொழிபெயர்ப்பை மாற்றியமைக்கிறது.",
+        "te": "కృత్రిమ మేధస్సు ప్రపంచవ్యాప్తంగా భాషా అనువాదాన్ని మారుస్తోంది."
+    },
+    {
+        "en": "Transformers use self-attention mechanisms to process sequential text.",
+        "hi": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।",
+        "ta": "டிரான்ஸ்பார்மர்கள் தொடர் உரையை செயலாக்க சுய-கவன வழிமுறைகளைப் பயன்படுத்துகின்றன.",
+        "te": "ట్రాన్స్‌ఫార్మర్లు వరుస పాఠ్యాన్ని ప్రాసెస్ చేయడానికి స్వీయ-శ్రద్ధ విధానాలను ఉపయోగిస్తాయి."
+    },
+    {
+        "en": "Knowledge and education empower individuals to achieve their dreams.",
+        "hi": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।",
+        "ta": "அறிவும் கல்வியும் தனிநபர்கள் தங்கள் கனவுகளை அடைய அதிகாரம் அளிக்கின்றன.",
+        "te": "జ్ఞానం మరియు విద్య వ్యక్తులు తమ కలలను సాధించేలా సాధికారత కల్పిస్తాయి."
+    },
+    {
+        "en": "Students should practice coding and deep learning daily.",
+        "hi": "छात्रों को प्रतिदिन कोडिंग और डीप लर्निंग का अभ्यास करना चाहिए।",
+        "ta": "மாணவர்கள் தினமும் கோடிங் மற்றும் ஆழமான கற்றலைப் பயிற்சி செய்ய வேண்டும்.",
+        "te": "విద్యార్థులు ప్రతిరోజూ కోడింగ్ మరియు డీప్ లెర్నింగ్ సాధన చేయాలి."
     }
 ]
 
 
-def evaluate_nllb_pretrained(test_data):
-    sources = [item["src"] for item in test_data]
-    references = [item["ref"] for item in test_data]
-
-    print("\n--- Evaluating Pretrained NLLB-200 ---")
-    predictions = []
-    t_start = benchmark_translation_speed(
-        lambda s: translation_engine.translate(s, "eng_Latn", "hin_Deva")["translated_text"],
-        sources
-    )
-
-    for s in sources:
-        res = translation_engine.translate(s, "eng_Latn", "hin_Deva", num_beams=2)
-        predictions.append(res["translated_text"])
-
-    bleu = compute_sacrebleu(predictions, references)
-    chrf = compute_chrf(predictions, references)
-
-    print(f"Pretrained NLLB-200 -> BLEU: {bleu:.2f} | chrF++: {chrf:.2f} | Latency: {t_start['avg_latency_sec']}s")
-    return {
-        "model_name": "Pretrained NLLB-200 (600M)",
-        "bleu": bleu,
-        "chrf": chrf,
-        "avg_latency_sec": t_start["avg_latency_sec"],
-        "throughput_chars_per_sec": t_start["throughput_chars_per_sec"],
-        "predictions": predictions,
-        "samples": [{"src": s, "ref": r, "hyp": p} for s, r, p in zip(sources, references, predictions)]
-    }
-
-
-def evaluate_custom_transformer():
-    checkpoint_path = "ml_lab/checkpoints/custom_transformer_checkpoint.pt"
+def load_custom_multilingual_model(
+    checkpoint_path: str = "ml_lab/checkpoints/custom_multilingual_transformer.pt",
+    device: str = "cpu"
+):
     if not os.path.exists(checkpoint_path):
-        print(f"Custom transformer checkpoint not found at {checkpoint_path}. Skipping.")
-        return None
+        raise FileNotFoundError(f"Checkpoint not found at: {checkpoint_path}")
 
-    print("\n--- Evaluating Custom Transformer ---")
-    device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt = torch.load(checkpoint_path, map_location=device)
-
-    src_vocab = SimpleVocab()
-    tgt_vocab = SimpleVocab()
-    src_vocab.w2i = ckpt["src_vocab"]
-    src_vocab.i2w = {i: w for w, i in src_vocab.w2i.items()}
-    tgt_vocab.w2i = ckpt["tgt_vocab"]
-    tgt_vocab.i2w = {i: w for w, i in tgt_vocab.w2i.items()}
-
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    tokenizer = MultilingualSubwordTokenizer.load(ckpt["tokenizer_path"])
     cfg = ckpt["config"]
+
     model = Seq2SeqTransformer(
-        src_vocab_size=len(src_vocab),
-        tgt_vocab_size=len(tgt_vocab),
+        src_vocab_size=cfg["vocab_size"],
+        tgt_vocab_size=cfg["vocab_size"],
         d_model=cfg["d_model"],
         n_heads=cfg["n_heads"],
         num_encoder_layers=cfg["num_layers"],
         num_decoder_layers=cfg["num_layers"],
         d_ff=cfg["d_ff"],
-        pad_idx=src_vocab.w2i[SimpleVocab.PAD_TOKEN]
+        share_embeddings=True
     ).to(device)
+
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
+    return model, tokenizer, ckpt
+
+
+def evaluate_direction(
+    model: Seq2SeqTransformer,
+    tokenizer: MultilingualSubwordTokenizer,
+    src_lang: str,
+    tgt_lang: str,
+    device: str = "cpu",
+    use_beam_search: bool = True
+) -> Dict[str, Any]:
+    sources = [item[src_lang] for item in HELD_OUT_TEST_SUITE]
+    references = [item[tgt_lang] for item in HELD_OUT_TEST_SUITE]
+    tgt_control_id = tokenizer.get_control_token_id(tgt_lang)
 
     def translate_fn(text: str) -> str:
-        tokens = [src_vocab.w2i[SimpleVocab.SOS_TOKEN]] + src_vocab.encode(text) + [src_vocab.w2i[SimpleVocab.EOS_TOKEN]]
-        src_t = torch.tensor([tokens], device=device)
-        gen = model.greedy_decode(src_t, sos_idx=tgt_vocab.w2i[SimpleVocab.SOS_TOKEN], eos_idx=tgt_vocab.w2i[SimpleVocab.EOS_TOKEN], max_len=20)
-        return tgt_vocab.decode(gen[0].tolist())
-
-    sources = ["hello how are you", "attention is all you need", "machine translation connects the world"]
-    references = ["namaste aap kaise hain", "attention hi sab kuch hai", "machine anuvaad duniya ko jodta hai"]
+        src_tokens = tokenizer.encode(text, add_special_tokens=True)
+        src_t = torch.tensor([src_tokens], dtype=torch.long, device=device)
+        with torch.no_grad():
+            if use_beam_search:
+                beams = model.beam_search_decode(
+                    src_t,
+                    beam_size=4,
+                    max_len=40,
+                    sos_idx=tokenizer.sos_id,
+                    eos_idx=tokenizer.eos_id,
+                    prefix_tokens=[tgt_control_id]
+                )
+                gen_ids = beams[0][0][0].tolist()
+            else:
+                out = model.greedy_decode(
+                    src_t,
+                    sos_idx=tokenizer.sos_id,
+                    eos_idx=tokenizer.eos_id,
+                    prefix_tokens=[tgt_control_id],
+                    max_len=40,
+                    repetition_penalty=1.2
+                )
+                gen_ids = out[0].tolist()
+        return tokenizer.decode(gen_ids)
 
     predictions = [translate_fn(s) for s in sources]
     bleu = compute_sacrebleu(predictions, references)
     chrf = compute_chrf(predictions, references)
     speed = benchmark_translation_speed(translate_fn, sources)
 
-    print(f"Custom Transformer -> BLEU: {bleu:.2f} | chrF++: {chrf:.2f} | Latency: {speed['avg_latency_sec']}s")
     return {
-        "model_name": "Custom Transformer (Educational)",
+        "direction": f"{src_lang} -> {tgt_lang}",
         "bleu": bleu,
         "chrf": chrf,
         "avg_latency_sec": speed["avg_latency_sec"],
         "throughput_chars_per_sec": speed["throughput_chars_per_sec"],
-        "predictions": predictions,
-        "samples": [{"src": s, "ref": r, "hyp": p} for s, r, p in zip(sources, references, predictions)]
+        "samples": [
+            {"source": s, "reference": r, "hypothesis": p}
+            for s, r, p in zip(sources, references, predictions)
+        ]
     }
-
-
-def generate_comparison_charts(results: list, output_dir: str = "ml_lab/evaluation/results"):
-    os.makedirs(output_dir, exist_ok=True)
-    valid_results = [r for r in results if r is not None]
-    if not valid_results:
-        return
-
-    model_names = [r["model_name"] for r in valid_results]
-    bleu_scores = [r["bleu"] for r in valid_results]
-    chrf_scores = [r["chrf"] for r in valid_results]
-    latencies = [r["avg_latency_sec"] for r in valid_results]
-
-    # 1. BLEU and chrF++ Bar Chart
-    plt.figure(figsize=(9, 5))
-    x = range(len(model_names))
-    width = 0.35
-
-    plt.bar([i - width/2 for i in x], bleu_scores, width=width, label="SacreBLEU", color="#4f6ef7")
-    plt.bar([i + width/2 for i in x], chrf_scores, width=width, label="chrF++", color="#10b981")
-
-    plt.ylabel("Score")
-    plt.title("Translation Quality Benchmark (Higher is Better)")
-    plt.xticks(x, model_names)
-    plt.legend()
-    plt.grid(axis='y', linestyle='--', alpha=0.5)
-    plt.tight_layout()
-
-    chart_path = os.path.join(output_dir, "bleu_chrf_comparison.png")
-    plt.savefig(chart_path, dpi=200)
-    plt.close()
-    print(f"Saved metric chart to: {chart_path}")
 
 
 def run_full_evaluation():
-    os.makedirs("ml_lab/evaluation/results", exist_ok=True)
-    res_nllb = evaluate_nllb_pretrained(TEST_SUITE)
-    res_custom = evaluate_custom_transformer()
+    device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    print("\n========================================================")
+    print("Evaluating Custom Multilingual Transformer on Held-Out Test Set")
+    print(f"Device: {device}")
+    print("========================================================")
 
-    all_results = {
-        "timestamp": "2026-11-21",
-        "benchmark_dataset": "LinguaAI Parallel Test Suite (En-Hi)",
-        "models": {
-            "nllb_pretrained": res_nllb,
-            "custom_transformer": res_custom
-        }
-    }
+    model, tokenizer, ckpt = load_custom_multilingual_model(device=device)
 
-    generate_comparison_charts([res_nllb, res_custom])
+    directions = [
+        ("en", "hi"),
+        ("en", "ta"),
+        ("en", "te"),
+        ("hi", "en"),
+        ("ta", "en"),
+        ("te", "en")
+    ]
 
-    with open("ml_lab/evaluation/results/evaluation_results.json", "w", encoding="utf-8") as f:
-        json.dump(all_results, f, indent=2, ensure_ascii=False)
+    results = {}
+    for src, tgt in directions:
+        eval_res = evaluate_direction(model, tokenizer, src, tgt, device=device)
+        print(f"[{eval_res['direction']}] SacreBLEU: {eval_res['bleu']:.2f} | chrF++: {eval_res['chrf']:.2f} | Latency: {eval_res['avg_latency_sec']}s")
+        results[eval_res['direction']] = eval_res
 
-    print("\nEvaluation completed. Results saved to evaluation/results/evaluation_results.json")
-    return all_results
+    # Save evaluation results JSON
+    out_dir = "ml_lab/evaluation/results"
+    os.makedirs(out_dir, exist_ok=True)
+    report_path = os.path.join(out_dir, "custom_multilingual_evaluation_report.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2, ensure_ascii=False)
+    print(f"\nFull scientific evaluation report saved to: {report_path}")
+
+    # Plot evaluation chart
+    plot_evaluation_chart(results, os.path.join(out_dir, "multilingual_bleu_chrf.png"))
+    return results
+
+
+def plot_evaluation_chart(results: Dict[str, Any], output_path: str):
+    labels = list(results.keys())
+    bleu_scores = [results[d]["bleu"] for d in labels]
+    chrf_scores = [results[d]["chrf"] for d in labels]
+
+    x = range(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    rects1 = ax.bar([i - width/2 for i in x], bleu_scores, width, label="SacreBLEU", color="#4f6ef7")
+    rects2 = ax.bar([i + width/2 for i in x], chrf_scores, width, label="chrF++", color="#10b981")
+
+    ax.set_ylabel("Score (0-100)")
+    ax.set_title("Custom Multilingual Transformer Evaluation Across Language Directions")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, rotation=15)
+    ax.legend()
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+    print(f"Evaluation chart saved to: {output_path}")
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 ## 1. High-Level Architectural Overview
 
-TranslateMe is structured around decoupled components that maintain strict separation of concerns across Deep Learning models, REST API microservices, persistent relational storage, and an interactive React frontend:
+TranslateMe is a genuinely from-scratch multilingual Neural Machine Translation (NMT) system built on an independent PyTorch Transformer implementation, a custom Byte-Pair Encoding (BPE) subword tokenizer, an asynchronous FastAPI backend, and an interactive React + Tailwind CSS research laboratory.
 
 ```
 +-----------------------------------------------------------------------+
@@ -14,59 +14,70 @@ TranslateMe is structured around decoupled components that maintain strict separ
 +-----------------------------------------------------------------------+
 |                        FastAPI Backend Engine                         |
 |  - Request Validation (Pydantic)   - CORS Middleware                  |
-|  - Language Detection Service      - Document Processing (PyMuPDF)    |
-|  - Rate & Length Boundary Checks   - Lifecycle Model Warmup           |
+|  - Language Routing & Control      - Live Attention Extraction API    |
+|  - Rate & Length Boundary Checks   - Lifecycle Custom Model Loader    |
 +------------------+--------------------------------+-------------------+
                    |                                |
                    v                                v
 +-----------------------------------+   +-------------------------------+
-|     Translation Engine (PyTorch)   |   |   SQLite History Database     |
-| - NLLB-200 (facebook/600M)        |   |   (SQLAlchemy ORM)            |
-|   * 202 Languages Direct Mapping  |   |   * Source & Translated Text  |
-|   * Beam Search & Alternatives    |   |   * Latency Metrics           |
-| - Custom Seq2Seq Transformer      |   |   * Language Distributions    |
-|   * Sinusoidal Positional Encoding|   +-------------------------------+
-|   * Scaled Dot-Product Attention  |
-|   * Multi-Head Attention Heads    |
+|  Custom Seq2Seq Transformer       |   |   SQLite History Database     |
+|  (Pure PyTorch Modules)           |   |   (SQLAlchemy ORM)            |
+|  - 6,033,408 Trainable Weights    |   |   * Source & Translated Text  |
+|  - 3 Encoder + 3 Decoder Layers   |   |   * Per-Inference Latency     |
+|  - 4 Multi-Head Attention Heads   |   |   * Language Distributions    |
+|  - Sinusoidal Positional Encoding |   +-------------------------------+
+|  - Shared Tied Embeddings (2,000) |
+|  - Autoregressive Beam Search     |
 +-----------------------------------+
 ```
 
 ---
 
-## 2. Deep Learning Subsystems
+## 2. Deep Learning Subsystem (`ml_lab/custom_transformer/`)
 
-### A. Pretrained Multilingual NLLB-200 Transformer
-- **Base Model**: `facebook/nllb-200-distilled-600M`
-- **Parameters**: 615,073,792 weights
-- **Vocabulary**: 256,204 tokens with SentencePiece Byte-Pair Encoding
-- **Direct Many-to-Many Translation**: Supports arbitrary pairs (e.g. Hindi $\rightarrow$ Tamil, Tamil $\rightarrow$ French, Telugu $\rightarrow$ Japanese) without translating through English as an intermediary pivot language.
-- **Forced Target Generation**: Employs target language special tokens passed as `forced_bos_token_id` to guide autoregressive decoding.
+The core translation engine is implemented independently in pure PyTorch without relying on `torch.nn.Transformer` or Hugging Face pretrained models:
 
-### B. Custom Transformer (Vaswani et al., 2017)
-- Located in `models/custom_transformer/`
-- Implements:
-  1. `TokenEmbedding`: Input embedding scaled by $\sqrt{d_{model}}$.
-  2. `PositionalEncoding`: Sinusoidal trigonometric wave positions.
-  3. `ScaledDotProductAttention`: $\text{softmax}\left(\frac{QK^T}{\sqrt{d_k}} + M\right)V$.
-  4. `MultiHeadAttention`: Parallel projections across $h$ subspaces.
-  5. `PositionwiseFeedForward`: Two-layer linear feed-forward network with ReLU/GELU.
-  6. `SublayerConnection`: Residual additions with Layer Normalization.
-  7. `Seq2SeqTransformer`: Encoder-Decoder integration with causal triangular masking.
+1. **`ScaledDotProductAttention` (`attention.py`)**:
+   $$\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K^T}{\sqrt{d_k}} + M\right) V$$
+   Supports dynamic cross-attention matrix extraction (`return_attn=True`).
+
+2. **`MultiHeadAttention` (`attention.py`)**:
+   Splits queries, keys, and values into $h = 4$ representation subspaces with $d_k = d_v = 64$, concatenated and projected through $W^O$.
+
+3. **`TokenEmbedding` & `PositionalEncoding` (`embeddings.py`)**:
+   Scales subword embeddings by $\sqrt{d_{\text{model}}} = \sqrt{256} = 16$. Adds continuous sinusoidal frequencies across positions.
+
+4. **`TransformerEncoder` & `EncoderLayer` (`encoder.py`)**:
+   $N = 3$ identical encoder blocks with multi-head self-attention, position-wise feed-forward ($d_{\text{ff}} = 1024$), residual connections, and layer normalization.
+
+5. **`TransformerDecoder` & `DecoderLayer` (`decoder.py`)**:
+   $N = 3$ identical decoder blocks with masked self-attention (causal lower-triangular mask), cross-attention over encoder memory, and feed-forward networks.
+
+6. **`Seq2SeqTransformer` (`transformer.py`)**:
+   Ties input subword embeddings with the output linear generator, implements autoregressive greedy decoding with repetition penalty, and beam search decoding with length penalty normalization.
 
 ---
 
-## 3. Storage and Database Schema
+## 3. Multilingual Tokenization (`ml_lab/tokenizer/`)
+
+- **Subword BPE Model**: Trained from scratch over parallel corpus using Hugging Face `tokenizers`.
+- **Vocabulary Size**: 2,000 subwords supporting Latin (English), Devanagari (Hindi), Tamil, and Telugu scripts.
+- **Language Direction Control Tokens**: `<2en>`, `<2hi>`, `<2ta>`, `<2te>`.
+- **Special Tokens**: `<pad>` (0), `<sos>` (1), `<eos>` (2), `<unk>` (3).
+
+---
+
+## 4. Storage and Database Schema
 - **Database**: SQLite 3 (`lingua_ai.db`)
 - **ORM**: SQLAlchemy
 - **Table**: `translation_history`
-  - `id`: Integer primary key (autoincrement)
-  - `source_text`: Raw input text
+  - `id`: Primary key autoincrement
+  - `source_text`: Input text
   - `translated_text`: Autoregressively generated translation
-  - `source_language`: BCP-47 / Flores language code
-  - `source_language_name`: Human-readable source language
+  - `source_language`: Language code (`en`, `hi`, `ta`, `te`)
+  - `source_language_name`: English name
   - `target_language`: Target language code
-  - `target_language_name`: Human-readable target language
-  - `detected_language`: Automatically identified language code if auto-detect was used
-  - `inference_time`: High precision inference latency (seconds)
+  - `target_language_name`: Target English name
+  - `inference_time`: Latency in seconds
   - `model_name`: Model identifier
-  - `created_at`: UTC timestamp
+  - `created_at`: Timestamp

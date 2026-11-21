@@ -34,6 +34,11 @@ models/checkpoints/*
 *.bin
 *.safetensors
 *.onnx
+!ml_lab/checkpoints/custom_multilingual_transformer.pt
+
+# Compiled Frontend Distribution
+!frontend/dist/
+!frontend/dist/**
 
 # Datasets
 datasets/raw/*
@@ -58,7 +63,9 @@ evaluation/results/*.json
 # Node & Frontend
 node_modules/
 frontend/node_modules/
-frontend/dist/
+# frontend/dist/
+!frontend/dist/
+!frontend/dist/**
 frontend/.vite/
 npm-debug.log*
 yarn-debug.log*

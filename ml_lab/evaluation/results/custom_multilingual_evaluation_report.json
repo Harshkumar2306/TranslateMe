@@ -1,0 +1,296 @@
+{
+  "en -> hi": {
+    "direction": "en -> hi",
+    "bleu": 0.4,
+    "chrf": 3.31,
+    "avg_latency_sec": 1.462,
+    "throughput_chars_per_sec": 32.2,
+    "samples": [
+      {
+        "source": "Hello, how are you today?",
+        "reference": "नमस्ते, आज आप कैसे हैं?",
+        "hypothesis": "नमस्ते , , , , , , , , , , , நா ।"
+      },
+      {
+        "source": "What is your name?",
+        "reference": "आपका नाम क्या है?",
+        "hypothesis": "नमस्ते , , , , , , , , , , , நா ।"
+      },
+      {
+        "source": "My name is Harsh Kumar.",
+        "reference": "मेरा नाम हर्ष कुमार है।",
+        "hypothesis": "नमस्ते , , , , , , , , , , , நா ।"
+      },
+      {
+        "source": "Thank you very much for your kind help.",
+        "reference": "आपकी विनम्र मदद के लिए बहुत-बहुत धन्यवाद।",
+        "hypothesis": "नमस्ते , , , , , , , आज नाम कुमार है ।"
+      },
+      {
+        "source": "Artificial intelligence is transforming language translation across the world.",
+        "reference": "आर्टिफिशियल इंटेलिजेंस दुनिया भर में भाषा अनुवाद को बदल रहा है।",
+        "hypothesis": "गण ading మూల మూల వాక్య से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से"
+      },
+      {
+        "source": "Transformers use self-attention mechanisms to process sequential text.",
+        "reference": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।",
+        "hypothesis": "गण ading మూల మూల వాక్య से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से"
+      },
+      {
+        "source": "Knowledge and education empower individuals to achieve their dreams.",
+        "reference": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।",
+        "hypothesis": "गण ading మూల మూల వాక్య से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से से"
+      },
+      {
+        "source": "Students should practice coding and deep learning daily.",
+        "reference": "छात्रों को प्रतिदिन कोडिंग और डीप लर्निंग का अभ्यास करना चाहिए।",
+        "hypothesis": "नमस्ते , , , , , , , , , , , நா ।"
+      }
+    ]
+  },
+  "en -> ta": {
+    "direction": "en -> ta",
+    "bleu": 0.86,
+    "chrf": 11.17,
+    "avg_latency_sec": 1.433,
+    "throughput_chars_per_sec": 32.9,
+    "samples": [
+      {
+        "source": "Hello, how are you today?",
+        "reference": "வணக்கம், இன்று நீங்கள் எப்படி இருக்கிறீர்கள்?",
+        "hypothesis": "உங்கள் பெயர் ஹர் ஷ் குமார் ."
+      },
+      {
+        "source": "What is your name?",
+        "reference": "உங்கள் பெயர் என்ன?",
+        "hypothesis": "உங்கள் பெயர் ஹர் ஷ் குமார் ."
+      },
+      {
+        "source": "My name is Harsh Kumar.",
+        "reference": "என் பெயர் ஹர்ஷ் குமார்.",
+        "hypothesis": "உங்கள் பெயர் ஹர் ஷ் குமார் ."
+      },
+      {
+        "source": "Thank you very much for your kind help.",
+        "reference": "உங்கள் கனிவான உதவிக்கு மிக்க நன்றி.",
+        "hypothesis": "உங்கள் பெயர் ஹர் ஷ் குமார் ."
+      },
+      {
+        "source": "Artificial intelligence is transforming language translation across the world.",
+        "reference": "செயற்கை நுண்ணறிவு உலகம் முழுவதும் மொழிபெயர்ப்பை மாற்றியமைக்கிறது.",
+        "hypothesis": "புத்தகங்கள மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும்"
+      },
+      {
+        "source": "Transformers use self-attention mechanisms to process sequential text.",
+        "reference": "டிரான்ஸ்பார்மர்கள் தொடர் உரையை செயலாக்க சுய-கவன வழிமுறைகளைப் பயன்படுத்துகின்றன.",
+        "hypothesis": "புத்தகங்கள மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும்"
+      },
+      {
+        "source": "Knowledge and education empower individuals to achieve their dreams.",
+        "reference": "அறிவும் கல்வியும் தனிநபர்கள் தங்கள் கனவுகளை அடைய அதிகாரம் அளிக்கின்றன.",
+        "hypothesis": "புத்தகங்கள மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும் மற்றும்"
+      },
+      {
+        "source": "Students should practice coding and deep learning daily.",
+        "reference": "மாணவர்கள் தினமும் கோடிங் மற்றும் ஆழமான கற்றலைப் பயிற்சி செய்ய வேண்டும்.",
+        "hypothesis": "உங்கள் பெயர் ஹர் ஷ் குமார் ."
+      }
+    ]
+  },
+  "en -> te": {
+    "direction": "en -> te",
+    "bleu": 0.0,
+    "chrf": 5.05,
+    "avg_latency_sec": 1.449,
+    "throughput_chars_per_sec": 32.5,
+    "samples": [
+      {
+        "source": "Hello, how are you today?",
+        "reference": "నమస్కారం, ఈరోజు మీరు ఎలా ఉన్నారు?",
+        "hypothesis": "టీ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+      },
+      {
+        "source": "What is your name?",
+        "reference": "మీ పేరు ఏమిటి?",
+        "hypothesis": "టీ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+      },
+      {
+        "source": "My name is Harsh Kumar.",
+        "reference": "నా పేరు హర్ష్ కుమార్.",
+        "hypothesis": "టీ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+      },
+      {
+        "source": "Thank you very much for your kind help.",
+        "reference": "మీ దయతో కూడిన సహాయానికి చాలా ధన్యవాదాలు.",
+        "hypothesis": "టీ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+      },
+      {
+        "source": "Artificial intelligence is transforming language translation across the world.",
+        "reference": "కృత్రిమ మేధస్సు ప్రపంచవ్యాప్తంగా భాషా అనువాదాన్ని మారుస్తోంది.",
+        "hypothesis": "ఎన్‌ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ మూల అనువాద అభ శ్రేయస్సు శ్రేయస్సు ను శ్రేయస్సు ను ను ను ను ను ను శ్రేయస్సు ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను"
+      },
+      {
+        "source": "Transformers use self-attention mechanisms to process sequential text.",
+        "reference": "ట్రాన్స్‌ఫార్మర్లు వరుస పాఠ్యాన్ని ప్రాసెస్ చేయడానికి స్వీయ-శ్రద్ధ విధానాలను ఉపయోగిస్తాయి.",
+        "hypothesis": "ఎన్‌ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ మూల అనువాద అభ శ్రేయస్సు శ్రేయస్సు ను శ్రేయస్సు ను ను ను ను ను ను శ్రేయస్సు ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను"
+      },
+      {
+        "source": "Knowledge and education empower individuals to achieve their dreams.",
+        "reference": "జ్ఞానం మరియు విద్య వ్యక్తులు తమ కలలను సాధించేలా సాధికారత కల్పిస్తాయి.",
+        "hypothesis": "ఎన్‌ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ కోడర్ మూల అనువాద అభ శ్రేయస్సు శ్రేయస్సు ను శ్రేయస్సు ను ను ను ను ను ను శ్రేయస్సు ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను ను"
+      },
+      {
+        "source": "Students should practice coding and deep learning daily.",
+        "reference": "విద్యార్థులు ప్రతిరోజూ కోడింగ్ మరియు డీప్ లెర్నింగ్ సాధన చేయాలి.",
+        "hypothesis": "టీ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"
+      }
+    ]
+  },
+  "hi -> en": {
+    "direction": "hi -> en",
+    "bleu": 0.0,
+    "chrf": 5.06,
+    "avg_latency_sec": 1.462,
+    "throughput_chars_per_sec": 33.6,
+    "samples": [
+      {
+        "source": "नमस्ते, आज आप कैसे हैं?",
+        "reference": "Hello, how are you today?",
+        "hypothesis": "Than k ver y y y y y y y y y ver y y y y y y y y y y y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "आपका नाम क्या है?",
+        "reference": "What is your name?",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y"
+      },
+      {
+        "source": "मेरा नाम हर्ष कुमार है।",
+        "reference": "My name is Harsh Kumar.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y y"
+      },
+      {
+        "source": "आपकी विनम्र मदद के लिए बहुत-बहुत धन्यवाद।",
+        "reference": "Thank you very much for your kind help.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "आर्टिफिशियल इंटेलिजेंस दुनिया भर में भाषा अनुवाद को बदल रहा है।",
+        "reference": "Artificial intelligence is transforming language translation across the world.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "ट्रांसफॉर्मर अनुक्रमिक पाठ को संसाधित करने के लिए सेल्फ-अटेंशन तंत्र का उपयोग करते हैं।",
+        "reference": "Transformers use self-attention mechanisms to process sequential text.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "ज्ञान और शिक्षा व्यक्तियों को अपने सपनों को पूरा करने के लिए सशक्त बनाती है।",
+        "reference": "Knowledge and education empower individuals to achieve their dreams.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "छात्रों को प्रतिदिन कोडिंग और डीप लर्निंग का अभ्यास करना चाहिए।",
+        "reference": "Students should practice coding and deep learning daily.",
+        "hypothesis": "Than k ver y y y y y y y y y ver y y y y y y y y y y y y y y y y y y y y y y y y y y y"
+      }
+    ]
+  },
+  "ta -> en": {
+    "direction": "ta -> en",
+    "bleu": 0.11,
+    "chrf": 5.53,
+    "avg_latency_sec": 1.612,
+    "throughput_chars_per_sec": 31.5,
+    "samples": [
+      {
+        "source": "வணக்கம், இன்று நீங்கள் எப்படி இருக்கிறீர்கள்?",
+        "reference": "Hello, how are you today?",
+        "hypothesis": "Than k ver y y y y y y y y ver y y y y y y y y y y y y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "உங்கள் பெயர் என்ன?",
+        "reference": "What is your name?",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y"
+      },
+      {
+        "source": "என் பெயர் ஹர்ஷ் குமார்.",
+        "reference": "My name is Harsh Kumar.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "உங்கள் கனிவான உதவிக்கு மிக்க நன்றி.",
+        "reference": "Thank you very much for your kind help.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y"
+      },
+      {
+        "source": "செயற்கை நுண்ணறிவு உலகம் முழுவதும் மொழிபெயர்ப்பை மாற்றியமைக்கிறது.",
+        "reference": "Artificial intelligence is transforming language translation across the world.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "டிரான்ஸ்பார்மர்கள் தொடர் உரையை செயலாக்க சுய-கவன வழிமுறைகளைப் பயன்படுத்துகின்றன.",
+        "reference": "Transformers use self-attention mechanisms to process sequential text.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "அறிவும் கல்வியும் தனிநபர்கள் தங்கள் கனவுகளை அடைய அதிகாரம் அளிக்கின்றன.",
+        "reference": "Knowledge and education empower individuals to achieve their dreams.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "மாணவர்கள் தினமும் கோடிங் மற்றும் ஆழமான கற்றலைப் பயிற்சி செய்ய வேண்டும்.",
+        "reference": "Students should practice coding and deep learning daily.",
+        "hypothesis": "I am learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning learning"
+      }
+    ]
+  },
+  "te -> en": {
+    "direction": "te -> en",
+    "bleu": 0.0,
+    "chrf": 4.56,
+    "avg_latency_sec": 1.588,
+    "throughput_chars_per_sec": 30.9,
+    "samples": [
+      {
+        "source": "నమస్కారం, ఈరోజు మీరు ఎలా ఉన్నారు?",
+        "reference": "Hello, how are you today?",
+        "hypothesis": "Than k ver y y y y y y y y y y ver y y y y y y y y y y y y much y y y y y y y y y y y y y"
+      },
+      {
+        "source": "మీ పేరు ఏమిటి?",
+        "reference": "What is your name?",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y"
+      },
+      {
+        "source": "నా పేరు హర్ష్ కుమార్.",
+        "reference": "My name is Harsh Kumar.",
+        "hypothesis": "Than k ver y y y y y y y y ver y y y y y y y y y y y y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "మీ దయతో కూడిన సహాయానికి చాలా ధన్యవాదాలు.",
+        "reference": "Thank you very much for your kind help.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "కృత్రిమ మేధస్సు ప్రపంచవ్యాప్తంగా భాషా అనువాదాన్ని మారుస్తోంది.",
+        "reference": "Artificial intelligence is transforming language translation across the world.",
+        "hypothesis": "Than k ver y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y y y y y y"
+      },
+      {
+        "source": "ట్రాన్స్‌ఫార్మర్లు వరుస పాఠ్యాన్ని ప్రాసెస్ చేయడానికి స్వీయ-శ్రద్ధ విధానాలను ఉపయోగిస్తాయి.",
+        "reference": "Transformers use self-attention mechanisms to process sequential text.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "జ్ఞానం మరియు విద్య వ్యక్తులు తమ కలలను సాధించేలా సాధికారత కల్పిస్తాయి.",
+        "reference": "Knowledge and education empower individuals to achieve their dreams.",
+        "hypothesis": "The er generat es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es es"
+      },
+      {
+        "source": "విద్యార్థులు ప్రతిరోజూ కోడింగ్ మరియు డీప్ లెర్నింగ్ సాధన చేయాలి.",
+        "reference": "Students should practice coding and deep learning daily.",
+        "hypothesis": "Than k y y y y y y y y y y y y y y y y y y y y y y y y y ver y y y y y y y y y y y y"
+      }
+    ]
+  }
+}

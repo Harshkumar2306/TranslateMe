@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.app.core.config import settings
 from backend.app.api.routes import router
-from backend.app.services.nllb_service import translation_engine
+from backend.app.services.custom_multilingual_service import custom_multilingual_engine
 
 # Setup logging
 logging.basicConfig(
@@ -26,23 +26,23 @@ logger = logging.getLogger("translateme")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Lifespan handler: warms up the multilingual Transformer model once
-    upon server start so users experience fast translation without cold-start delay.
+    Lifespan handler: Loads our custom-trained Multilingual Transformer model
+    from scratch without downloading or depending on external pretrained models.
     """
-    logger.info("Initializing TranslateMe Deep Learning Translation Services...")
+    logger.info("Initializing TranslateMe Custom Transformer Deep Learning Services...")
     try:
-        translation_engine.load_model()
-        logger.info("TranslateMe Backend startup complete. Ready to serve requests!")
+        custom_multilingual_engine.load_model()
+        logger.info("TranslateMe Custom Transformer startup complete. Ready to serve requests!")
     except Exception as e:
-        logger.warning(f"Deferred model loading: {e}")
+        logger.warning(f"Custom model loading notification: {e}")
     yield
-    logger.info("Shutting down TranslateMe Translation Services.")
+    logger.info("Shutting down TranslateMe Custom Translation Services.")
 
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Universal Multilingual Neural Machine Translation System Using Transformer-Based Deep Learning (NLLB-200 & Custom Transformer).",
+    description="Custom Multilingual Neural Machine Translation System Built and Trained From Scratch in PyTorch.",
     lifespan=lifespan
 )
 

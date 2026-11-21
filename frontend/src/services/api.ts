@@ -104,3 +104,23 @@ export async function fetchLabInfo(): Promise<LabInfo> {
   if (!res.ok) throw new Error('Failed to fetch Deep Learning Lab data');
   return res.json();
 }
+
+export async function fetchAttentionMatrix(
+  text: string,
+  sourceLang: string = 'en',
+  targetLang: string = 'hi'
+): Promise<{
+  source_text: string;
+  translated_text: string;
+  source_tokens: string[];
+  target_tokens: string[];
+  attention_matrix: number[][];
+}> {
+  const res = await fetch(`${API_BASE}/lab/attention`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, source_lang: sourceLang, target_lang: targetLang })
+  });
+  if (!res.ok) throw new Error('Failed to fetch attention weights');
+  return res.json();
+}

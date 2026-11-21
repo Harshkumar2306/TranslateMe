@@ -1,15 +1,83 @@
 """
 Complete Sequence-to-Sequence Transformer Architecture
 Section 3 of 'Attention Is All You Need' (Vaswani et al., 2017)
+Independent, from-scratch PyTorch implementation with weight tying,
+beam search decoding, target control conditioning, and attention extraction.
 """
 
-from typing import Optional, List
+from dataclasses import dataclass
+from typing import Optional, List, Tuple, Dict, Any
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from .encoder import TransformerEncoder
 from .decoder import TransformerDecoder
+from .embeddings import TransformerEmbedding
+
+
+@dataclass
+class TransformerConfig:
+    """Configurable hyperparameters for Transformer architecture."""
+    vocab_size: int = 32000
+    src_vocab_size: Optional[int] = None
+    tgt_vocab_size: Optional[int] = None
+    d_model: int = 512
+    n_heads: int = 8
+    num_encoder_layers: int = 6
+    num_decoder_layers: int = 6
+    d_ff: int = 2048
+    max_len: int = 512
+    dropout: float = 0.1
+    pad_idx: int = 0
+    share_embeddings: bool = True
+    pre_ln: bool = False
+
+    def __post_init__(self):
+        if self.src_vocab_size is None:
+            self.src_vocab_size = self.vocab_size
+        if self.tgt_vocab_size is None:
+            self.tgt_vocab_size = self.vocab_size
+
+    @classmethod
+    def base(cls, vocab_size: int = 32000) -> "TransformerConfig":
+        """Standard Vaswani et al. Base configuration."""
+        return cls(
+            vocab_size=vocab_size,
+            d_model=512,
+            n_heads=8,
+            num_encoder_layers=6,
+            num_decoder_layers=6,
+            d_ff=2048,
+            dropout=0.1
+        )
+
+    @classmethod
+    def small(cls, vocab_size: int = 16000) -> "TransformerConfig":
+        """Compact configuration suitable for fast experimentation & edge inference."""
+        return cls(
+            vocab_size=vocab_size,
+            d_model=256,
+            n_heads=4,
+            num_encoder_layers=3,
+            num_decoder_layers=3,
+            d_ff=1024,
+            dropout=0.1
+        )
+
+    @classmethod
+    def tiny(cls, vocab_size: int = 1000) -> "TransformerConfig":
+        """Ultra-lightweight configuration for smoke tests, unit tests, and debugging."""
+        return cls(
+            vocab_size=vocab_size,
+            d_model=64,
+            n_heads=2,
+            num_encoder_layers=2,
+            num_decoder_layers=2,
+            d_ff=128,
+            dropout=0.0
+        )
 
 
 class Generator(nn.Module):
@@ -20,7 +88,7 @@ class Generator(nn.Module):
     """
     def __init__(self, d_model: int, vocab_size: int):
         super().__init__()
-        self.proj = nn.Linear(d_model, vocab_size)
+        self.proj = nn.Linear(d_model, vocab_size, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -43,7 +111,7 @@ def make_src_mask(src: torch.Tensor, pad_idx: int = 0) -> torch.Tensor:
 def make_subsequent_mask(size: int) -> torch.Tensor:
     """
     Creates a lower-triangular causal mask to prevent decoder positions
-    from attending to subsequent tokens (look-ahead mask).
+    from attending to subsequent tokens (look-ahead masking).
     Shape: (1, 1, size, size)
     """
     attn_shape = (1, 1, size, size)
@@ -64,34 +132,52 @@ def make_tgt_mask(tgt: torch.Tensor, pad_idx: int = 0) -> torch.Tensor:
 
 class Seq2SeqTransformer(nn.Module):
     """
-    Standard Encoder-Decoder Transformer Architecture.
+    Full Encoder-Decoder Multilingual Transformer Architecture.
     
-    Components:
-    1. Input Embeddings (Source & Target)
-    2. Sinusoidal Positional Encoding
-    3. Multi-Head Scaled Dot-Product Attention
-    4. Position-Wise Feed-Forward Networks
-    5. Residual Connections & Layer Normalization
-    6. Masked Decoder Self-Attention
-    7. Encoder-Decoder Cross Attention
-    8. Linear Output Projection & Softmax Generation
+    Mathematical Formulation:
+      Memory = Encoder(Source, Src_Mask)
+      Output = Decoder(Target, Memory, Src_Mask, Tgt_Mask)
+      P(w)   = Softmax(Linear(Output))
     """
     def __init__(
         self,
         src_vocab_size: int,
         tgt_vocab_size: int,
-        d_model: int = 256,
+        d_model: int = 512,
         n_heads: int = 8,
-        num_encoder_layers: int = 3,
-        num_decoder_layers: int = 3,
-        d_ff: int = 512,
+        num_encoder_layers: int = 6,
+        num_decoder_layers: int = 6,
+        d_ff: int = 2048,
         max_len: int = 512,
         dropout: float = 0.1,
-        pad_idx: int = 0
+        pad_idx: int = 0,
+        share_embeddings: bool = True,
+        pre_ln: bool = False
     ):
         super().__init__()
         self.pad_idx = pad_idx
         self.d_model = d_model
+        self.share_embeddings = share_embeddings
+
+        # Shared multilingual embedding or separate tables
+        if share_embeddings and src_vocab_size == tgt_vocab_size:
+            shared_lut = nn.Embedding(src_vocab_size, d_model, padding_idx=pad_idx)
+            enc_embedding = TransformerEmbedding(
+                src_vocab_size, d_model, max_len=max_len, dropout=dropout,
+                padding_idx=pad_idx, shared_embedding=shared_lut
+            )
+            dec_embedding = TransformerEmbedding(
+                tgt_vocab_size, d_model, max_len=max_len, dropout=dropout,
+                padding_idx=pad_idx, shared_embedding=shared_lut
+            )
+        else:
+            shared_lut = None
+            enc_embedding = TransformerEmbedding(
+                src_vocab_size, d_model, max_len=max_len, dropout=dropout, padding_idx=pad_idx
+            )
+            dec_embedding = TransformerEmbedding(
+                tgt_vocab_size, d_model, max_len=max_len, dropout=dropout, padding_idx=pad_idx
+            )
 
         self.encoder = TransformerEncoder(
             vocab_size=src_vocab_size,
@@ -100,7 +186,9 @@ class Seq2SeqTransformer(nn.Module):
             n_heads=n_heads,
             d_ff=d_ff,
             max_len=max_len,
-            dropout=dropout
+            dropout=dropout,
+            pre_ln=pre_ln,
+            embedding=enc_embedding
         )
 
         self.decoder = TransformerDecoder(
@@ -110,30 +198,66 @@ class Seq2SeqTransformer(nn.Module):
             n_heads=n_heads,
             d_ff=d_ff,
             max_len=max_len,
-            dropout=dropout
+            dropout=dropout,
+            pre_ln=pre_ln,
+            embedding=dec_embedding
         )
 
         self.generator = Generator(d_model, tgt_vocab_size)
 
-        # Initialize parameters with Xavier uniform
+        # Weight tying: share projection weights with embedding weights (Section 3.4)
+        if share_embeddings and shared_lut is not None:
+            self.generator.proj.weight = shared_lut.weight
+
+        # Parameter initialization: Xavier Uniform
         self._init_weights()
 
+    @classmethod
+    def from_config(cls, config: TransformerConfig) -> "Seq2SeqTransformer":
+        return cls(
+            src_vocab_size=config.src_vocab_size or config.vocab_size,
+            tgt_vocab_size=config.tgt_vocab_size or config.vocab_size,
+            d_model=config.d_model,
+            n_heads=config.n_heads,
+            num_encoder_layers=config.num_encoder_layers,
+            num_decoder_layers=config.num_decoder_layers,
+            d_ff=config.d_ff,
+            max_len=config.max_len,
+            dropout=config.dropout,
+            pad_idx=config.pad_idx,
+            share_embeddings=config.share_embeddings,
+            pre_ln=config.pre_ln
+        )
+
     def _init_weights(self):
-        for p in self.parameters():
-            if p.dim() > 1:
+        """Initializes model parameters using Xavier uniform distribution."""
+        for name, p in self.named_parameters():
+            if p.dim() > 1 and "proj.weight" not in name:
                 nn.init.xavier_uniform_(p)
 
-    def encode(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        return self.encoder(src, src_mask)
+    def count_parameters(self) -> Dict[str, int]:
+        """Returns total and trainable parameter counts."""
+        total = sum(p.numel() for p in self.parameters())
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        return {"total_parameters": total, "trainable_parameters": trainable}
+
+    def encode(
+        self,
+        src: torch.Tensor,
+        src_mask: Optional[torch.Tensor] = None,
+        return_all_attentions: bool = False
+    ) -> torch.Tensor:
+        return self.encoder(src, src_mask, return_all_attentions=return_all_attentions)
 
     def decode(
         self,
         tgt: torch.Tensor,
         memory: torch.Tensor,
         src_mask: Optional[torch.Tensor] = None,
-        tgt_mask: Optional[torch.Tensor] = None
+        tgt_mask: Optional[torch.Tensor] = None,
+        return_all_attentions: bool = False
     ) -> torch.Tensor:
-        return self.decoder(tgt, memory, src_mask, tgt_mask)
+        return self.decoder(tgt, memory, src_mask, tgt_mask, return_all_attentions=return_all_attentions)
 
     def forward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
         """
@@ -157,29 +281,144 @@ class Seq2SeqTransformer(nn.Module):
         src: torch.Tensor,
         sos_idx: int = 1,
         eos_idx: int = 2,
-        max_len: int = 64
-    ) -> torch.Tensor:
+        max_len: int = 64,
+        prefix_tokens: Optional[List[int]] = None,
+        return_attention: bool = False,
+        repetition_penalty: float = 1.0
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Autoregressively generates target tokens using Greedy Search.
+        Supports target language prefix conditioning (e.g. `<2hi>`) and repetition penalty.
         """
         self.eval()
         device = src.device
         src_mask = make_src_mask(src, self.pad_idx)
         memory = self.encode(src, src_mask)
 
-        # Initialize target sequence with start-of-sequence token
-        ys = torch.ones(src.size(0), 1, dtype=torch.long, device=device).fill_(sos_idx)
+        # Initialize target sequence
+        if prefix_tokens is not None and len(prefix_tokens) > 0:
+            initial_seq = [sos_idx] + prefix_tokens
+            ys = torch.tensor([initial_seq], dtype=torch.long, device=device)
+        else:
+            ys = torch.ones(src.size(0), 1, dtype=torch.long, device=device).fill_(sos_idx)
+
+        last_cross_attn = None
 
         for _ in range(max_len - 1):
             tgt_mask = make_tgt_mask(ys, self.pad_idx)
-            out = self.decode(ys, memory, src_mask, tgt_mask)
-            log_prob = self.generator(out[:, -1:])
-            next_token = torch.argmax(log_prob, dim=-1)  # (batch_size, 1)
+            if return_attention:
+                out, cross_attns = self.decode(ys, memory, src_mask, tgt_mask, return_all_attentions=True)
+                if cross_attns:
+                    last_cross_attn = cross_attns[-1]  # Last decoder layer cross attention
+            else:
+                out = self.decode(ys, memory, src_mask, tgt_mask)
+
+            log_prob = self.generator(out[:, -1:])  # (batch_size, 1, vocab_size)
+
+            if repetition_penalty > 1.0 and ys.size(1) > 1:
+                logits = log_prob[0, -1].clone()
+                for token_id in set(ys[0].tolist()):
+                    if token_id == sos_idx or token_id == self.pad_idx:
+                        continue
+                    if logits[token_id] < 0:
+                        logits[token_id] *= repetition_penalty
+                    else:
+                        logits[token_id] /= repetition_penalty
+                next_token = torch.argmax(logits).view(1, 1)
+            else:
+                next_token = torch.argmax(log_prob, dim=-1)  # (batch_size, 1)
 
             ys = torch.cat([ys, next_token], dim=1)
 
-            # Check if all sequences in batch have reached EOS
             if (next_token == eos_idx).all():
                 break
 
+        if return_attention:
+            return ys, last_cross_attn
         return ys
+
+    @torch.no_grad()
+    def beam_search_decode(
+        self,
+        src: torch.Tensor,
+        beam_size: int = 4,
+        max_len: int = 64,
+        length_penalty: float = 0.6,
+        repetition_penalty: float = 1.25,
+        sos_idx: int = 1,
+        eos_idx: int = 2,
+        prefix_tokens: Optional[List[int]] = None
+    ) -> List[Tuple[torch.Tensor, float]]:
+        """
+        Beam search decoding for sequence generation.
+        Returns top-ranked hypotheses along with length-normalized log-likelihood scores.
+        Supports length penalty normalization and repetition penalty.
+        """
+        self.eval()
+        device = src.device
+        src_mask = make_src_mask(src, self.pad_idx)
+        memory = self.encode(src, src_mask)
+
+        initial_seq = [sos_idx]
+        if prefix_tokens:
+            initial_seq += prefix_tokens
+
+        # Hypothesis: (sequence_tensor, cumulative_log_prob)
+        beams = [(torch.tensor([initial_seq], dtype=torch.long, device=device), 0.0)]
+        completed_beams = []
+
+        for step in range(max_len):
+            new_candidates = []
+
+            for seq, score in beams:
+                tgt_mask = make_tgt_mask(seq, self.pad_idx)
+                out = self.decode(seq, memory, src_mask, tgt_mask)
+                log_probs = self.generator(out[:, -1:]).view(-1)  # Shape: (vocab_size,)
+
+                if repetition_penalty > 1.0 and seq.size(1) > 1:
+                    logits = log_probs.clone()
+                    for token_id in set(seq[0].tolist()):
+                        if token_id == sos_idx or token_id == self.pad_idx:
+                            continue
+                        if logits[token_id] < 0:
+                            logits[token_id] *= repetition_penalty
+                        else:
+                            logits[token_id] /= repetition_penalty
+                    topk_probs, topk_indices = torch.topk(logits, beam_size * 2)
+                else:
+                    topk_probs, topk_indices = torch.topk(log_probs, beam_size * 2)
+
+                for prob, idx in zip(topk_probs, topk_indices):
+                    cand_seq = torch.cat([seq, idx.view(1, 1)], dim=1)
+                    cand_score = score + prob.item()
+                    if idx.item() == eos_idx:
+                        completed_beams.append((cand_seq, cand_score))
+                    else:
+                        new_candidates.append((cand_seq, cand_score))
+
+            if len(completed_beams) >= beam_size:
+                break
+
+            if not new_candidates:
+                break
+
+            # Sort candidate hypotheses by length-normalized score
+            def lp_score(cand):
+                s_len = cand[0].size(1)
+                # Length penalty: ((5 + len) / 6) ^ alpha
+                lp = ((5.0 + s_len) / 6.0) ** length_penalty
+                return cand[1] / lp
+
+            new_candidates.sort(key=lp_score, reverse=True)
+            beams = new_candidates[:beam_size]
+
+        # Combine completed and remaining active beams
+        all_candidates = completed_beams if completed_beams else beams
+
+        def final_lp_score(item):
+            s_len = item[0].size(1)
+            lp = ((5.0 + s_len) / 6.0) ** length_penalty
+            return item[1] / lp
+
+        all_candidates.sort(key=final_lp_score, reverse=True)
+        return all_candidates[:beam_size]

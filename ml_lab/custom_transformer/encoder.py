@@ -1,10 +1,10 @@
 """
 Transformer Encoder and EncoderLayer
-Section 3.1 of 'Attention Is All You Need'
+Section 3.1 of 'Attention Is All You Need' (Vaswani et al., 2017)
 """
 
 import copy
-from typing import Optional
+from typing import Optional, List, Tuple
 import torch
 import torch.nn as nn
 
@@ -21,10 +21,10 @@ def clones(module: nn.Module, n: int) -> nn.ModuleList:
 
 class EncoderLayer(nn.Module):
     """
-    Encoder is composed of a stack of N = 6 (or configurable) identical layers.
-    Each layer has two sub-layers:
+    EncoderLayer consists of two sub-layers:
       1. Multi-head self-attention mechanism
       2. Position-wise fully connected feed-forward network
+    with residual connections around each and layer normalization.
     """
     def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1, pre_ln: bool = False):
         super().__init__()
@@ -36,19 +36,33 @@ class EncoderLayer(nn.Module):
         ])
         self.d_model = d_model
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        return_attn: bool = False
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Args:
             x: Input tensor (batch_size, seq_len, d_model)
-            mask: Optional source padding mask (batch_size, 1, 1, seq_len)
-        Returns:
-            Encoded representation (batch_size, seq_len, d_model)
+            mask: Source padding mask (batch_size, 1, 1, seq_len)
+            return_attn: Whether to return self-attention weights
         """
-        # Sublayer 1: Multi-Head Self-Attention
-        x = self.sublayer_connections[0](x, lambda _x: self.self_attn(_x, _x, _x, mask))
-        # Sublayer 2: Feed-Forward Network
+        attn_weights = None
+        if return_attn:
+            # Manual sublayer pass to capture attention weights
+            norm_x = self.sublayer_connections[0].norm(x) if self.sublayer_connections[0].pre_ln else x
+            attn_out, attn_weights = self.self_attn(norm_x, norm_x, norm_x, mask=mask, return_attn=True)
+            if self.sublayer_connections[0].pre_ln:
+                x = x + self.sublayer_connections[0].dropout(attn_out)
+            else:
+                x = self.sublayer_connections[0].norm(x + self.sublayer_connections[0].dropout(attn_out))
+        else:
+            x = self.sublayer_connections[0](x, lambda _x: self.self_attn(_x, _x, _x, mask))
+
+        # Sublayer 2: Feed-Forward
         x = self.sublayer_connections[1](x, self.feed_forward)
-        return x
+        return x, attn_weights
 
 
 class TransformerEncoder(nn.Module):
@@ -59,28 +73,47 @@ class TransformerEncoder(nn.Module):
     def __init__(
         self,
         vocab_size: int,
-        d_model: int = 256,
-        n_layers: int = 3,
+        d_model: int = 512,
+        n_layers: int = 6,
         n_heads: int = 8,
-        d_ff: int = 512,
+        d_ff: int = 2048,
         max_len: int = 5000,
         dropout: float = 0.1,
-        pre_ln: bool = False
+        pre_ln: bool = False,
+        embedding: Optional[TransformerEmbedding] = None
     ):
         super().__init__()
-        self.embedding = TransformerEmbedding(vocab_size, d_model, max_len=max_len, dropout=dropout)
+        if embedding is not None:
+            self.embedding = embedding
+        else:
+            self.embedding = TransformerEmbedding(vocab_size, d_model, max_len=max_len, dropout=dropout)
+
         self.layers = clones(EncoderLayer(d_model, n_heads, d_ff, dropout, pre_ln=pre_ln), n_layers)
         self.norm = LayerNorm(d_model)
 
-    def forward(self, src: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(
+        self,
+        src: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        return_all_attentions: bool = False
+    ) -> Tuple[torch.Tensor, Optional[List[torch.Tensor]]]:
         """
         Args:
             src: Source token IDs (batch_size, seq_len)
             mask: Source padding mask (batch_size, 1, 1, seq_len)
+            return_all_attentions: Return list of self-attention matrices from each layer
         Returns:
-            Contextual memory representations (batch_size, seq_len, d_model)
+            encoded_representation or (encoded_representation, attention_list)
         """
         x = self.embedding(src)
+        attentions = []
+
         for layer in self.layers:
-            x = layer(x, mask)
-        return self.norm(x)
+            x, attn = layer(x, mask, return_attn=return_all_attentions)
+            if return_all_attentions:
+                attentions.append(attn)
+
+        norm_out = self.norm(x)
+        if return_all_attentions:
+            return norm_out, attentions
+        return norm_out

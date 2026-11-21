@@ -16,6 +16,7 @@ from ml_lab.custom_transformer import (
     DecoderLayer,
     TransformerDecoder,
     Seq2SeqTransformer,
+    TransformerConfig,
     make_src_mask,
     make_tgt_mask
 )
@@ -102,24 +103,63 @@ def test_seq2seq_transformer_forward():
     assert output.shape == (2, 5, tgt_vocab)
 
 
-def test_greedy_decode():
-    src_vocab = 50
-    tgt_vocab = 60
-    d_model = 64
+def test_future_token_leakage():
+    """
+    Verifies that the causal mask prevents future token information leakage.
+    Changing tokens in target positions > t must NOT change the decoder output at position t.
+    """
+    config = TransformerConfig.tiny(vocab_size=50)
+    model = Seq2SeqTransformer.from_config(config)
+    model.eval()
 
-    model = Seq2SeqTransformer(
-        src_vocab_size=src_vocab,
-        tgt_vocab_size=tgt_vocab,
-        d_model=d_model,
-        n_heads=4,
-        num_encoder_layers=1,
-        num_decoder_layers=1,
-        d_ff=128,
-        max_len=50
-    )
+    src = torch.tensor([[10, 20, 30]])
+    tgt1 = torch.tensor([[1, 5, 8, 12]])
+    tgt2 = torch.tensor([[1, 5, 8, 49]])  # Only the last token is different
 
-    src = torch.randint(1, src_vocab, (2, 6))
-    generated = model.greedy_decode(src, sos_idx=1, eos_idx=2, max_len=8)
-    assert generated.shape[0] == 2
-    assert generated.shape[1] <= 8
-    assert (generated[:, 0] == 1).all()
+    with torch.no_grad():
+        out1 = model(src, tgt1)
+        out2 = model(src, tgt2)
+
+    # Outputs at position 0, 1, 2 must be IDENTICAL within machine precision
+    assert torch.allclose(out1[:, :3, :], out2[:, :3, :], atol=1e-5), "Future token leaked into previous positions!"
+    # Output at position 3 can differ
+    assert not torch.allclose(out1[:, 3, :], out2[:, 3, :], atol=1e-3)
+
+
+def test_beam_search_decode():
+    config = TransformerConfig.tiny(vocab_size=50)
+    model = Seq2SeqTransformer.from_config(config)
+    model.eval()
+
+    src = torch.tensor([[5, 12, 18]])
+    beams = model.beam_search_decode(src, beam_size=3, max_len=6, sos_idx=1, eos_idx=2)
+    assert len(beams) == 3
+    # Top beam has valid sequence
+    top_seq, top_score = beams[0]
+    assert top_seq.shape[0] == 1
+    assert top_seq[0, 0].item() == 1  # starts with SOS
+
+
+def test_tied_embeddings():
+    config = TransformerConfig.tiny(vocab_size=100)
+    config.share_embeddings = True
+    model = Seq2SeqTransformer.from_config(config)
+
+    # Weights between generator projection and shared embedding must be identical
+    assert torch.equal(model.generator.proj.weight, model.encoder.embedding.lut.weight)
+    assert torch.equal(model.decoder.embedding.lut.weight, model.encoder.embedding.lut.weight)
+
+
+def test_cross_attention_extraction():
+    config = TransformerConfig.tiny(vocab_size=50)
+    model = Seq2SeqTransformer.from_config(config)
+    model.eval()
+
+    src = torch.tensor([[10, 15, 20]])
+    generated, cross_attn = model.greedy_decode(src, sos_idx=1, eos_idx=2, max_len=5, return_attention=True)
+    assert cross_attn is not None
+    # Shape of cross attention: (batch, n_heads, tgt_len, src_len)
+    assert cross_attn.shape[0] == 1
+    assert cross_attn.shape[1] == config.n_heads
+    assert cross_attn.shape[3] == 3
+

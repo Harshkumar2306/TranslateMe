@@ -66,7 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     {
       id: 'model',
       label: 'Model Specifications',
-      desc: 'NLLB-200 architecture & Meta AI research attribution',
+      desc: 'Custom PyTorch Transformer architecture & training specifications',
       icon: Info
     },
   ];
@@ -92,12 +92,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <span className="font-extrabold text-lg sm:text-xl tracking-tight bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 dark:from-white dark:via-slate-100 dark:to-slate-300 bg-clip-text text-transparent">
                     TranslateMe
                   </span>
-                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-brand-50 text-brand-700 dark:bg-brand-950/90 dark:text-brand-300 border border-brand-200/80 dark:border-brand-800">
-                    NLLB-200
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 dark:bg-violet-950/90 dark:text-violet-300 border border-violet-200/80 dark:border-violet-800">
+                    Custom Transformer
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 hidden sm:block">
-                  Universal Multilingual Transformer Translation
+                  From-Scratch Multilingual PyTorch Neural Machine Translation
                 </p>
               </div>
             </div>
