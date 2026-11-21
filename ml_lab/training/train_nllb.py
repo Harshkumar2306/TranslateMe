@@ -63,7 +63,7 @@ def run_finetuning(config_path: str = "training/config.yaml", max_steps: int = N
     output_dir = cfg["training"]["output_dir"]
 
     print(f"\n=======================================================")
-    print(f"LinguaAI: Fine-Tuning NLLB-200 ({src_lang} -> {tgt_lang})")
+    print(f"TranslateMe: Fine-Tuning NLLB-200 ({src_lang} -> {tgt_lang})")
     print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size} | LR: {lr}")
     print(f"=======================================================\n")
 

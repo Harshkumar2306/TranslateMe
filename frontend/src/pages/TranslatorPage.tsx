@@ -110,7 +110,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const presets = [
     { label: 'English → Hindi ("i am harsh kumar")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'i am harsh kumar' },
     { label: 'English → Hindi ("what is your name")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'what is your name' },
-    { label: 'English → Hindi ("welcome to polytrans")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to PolyTrans' },
+    { label: 'English → Hindi ("welcome to TranslateMe")', src: 'eng_Latn', tgt: 'hin_Deva', text: 'welcome to TranslateMe' },
     { label: 'Hindi → Tamil', src: 'hin_Deva', tgt: 'tam_Taml', text: 'नमस्ते, आप कैसे हैं?' },
     { label: 'Tamil → French', src: 'tam_Taml', tgt: 'fra_Latn', text: 'வணக்கம், எப்படி இருக்கிறீர்கள்?' },
     { label: 'English → Telugu', src: 'eng_Latn', tgt: 'tel_Telu', text: 'i am harsh kumar' },

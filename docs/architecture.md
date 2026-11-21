@@ -1,8 +1,8 @@
-# LinguaAI: System Architecture & Design
+# TranslateMe: System Architecture & Design
 
 ## 1. High-Level Architectural Overview
 
-LinguaAI is structured around decoupled components that maintain strict separation of concerns across Deep Learning models, REST API microservices, persistent relational storage, and an interactive React frontend:
+TranslateMe is structured around decoupled components that maintain strict separation of concerns across Deep Learning models, REST API microservices, persistent relational storage, and an interactive React frontend:
 
 ```
 +-----------------------------------------------------------------------+

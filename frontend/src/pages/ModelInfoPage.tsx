@@ -22,7 +22,7 @@ export const ModelInfoPage: React.FC = () => {
           Model Specifications & Research Attribution
         </h1>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          LinguaAI utilizes the open-source NLLB-200 (No Language Left Behind) Transformer developed by Meta AI Research, complemented by an educational from-scratch PyTorch Transformer.
+          TranslateMe utilizes the open-source NLLB-200 (No Language Left Behind) Transformer developed by Meta AI Research, complemented by an educational from-scratch PyTorch Transformer.
         </p>
       </div>
 

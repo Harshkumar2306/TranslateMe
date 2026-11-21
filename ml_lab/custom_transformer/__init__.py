@@ -1,5 +1,5 @@
 """
-LinguaAI Custom Transformer Package
+TranslateMe Custom Transformer Package
 From-scratch PyTorch implementation of the Transformer Architecture (Vaswani et al., 2017)
 """
 

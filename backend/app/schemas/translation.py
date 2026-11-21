@@ -1,5 +1,5 @@
 """
-Pydantic Schemas for LinguaAI API
+Pydantic Schemas for TranslateMe API
 """
 
 from typing import List, Optional

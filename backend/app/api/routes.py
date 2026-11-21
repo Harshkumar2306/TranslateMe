@@ -1,5 +1,5 @@
 """
-FastAPI REST API Routes for LinguaAI
+FastAPI REST API Routes for TranslateMe
 """
 
 import os
@@ -41,7 +41,7 @@ def health_check():
     device_info = get_device_info()
     return {
         "status": "healthy",
-        "service": "LinguaAI Multilingual Translation API",
+        "service": "TranslateMe Multilingual Translation API",
         "model_loaded": translation_engine.is_loaded,
         "device": device_info
     }

@@ -1,5 +1,5 @@
-# LinguaAI Deep Learning Training Configuration
-project_name: "LinguaAI"
+# TranslateMe Deep Learning Training Configuration
+project_name: "TranslateMe"
 experiment_name: "nllb_finetuning_en_hi"
 
 # Model Selection

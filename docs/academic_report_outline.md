@@ -1,10 +1,10 @@
 # Academic Project Report Outline
-## PolyTrans: Universal Multilingual Neural Machine Translation System Using Transformer-Based Deep Learning
+## TranslateMe: Universal Multilingual Neural Machine Translation System Using Transformer-Based Deep Learning
 
 ---
 
 ### 1. Abstract
-Presents the design, implementation, and empirical evaluation of LinguaAI, an end-to-end Neural Machine Translation (NMT) platform capable of many-to-many translation across 200+ languages without relying on English as an intermediary bridge language. The system incorporates Meta AI's NLLB-200 615M parameter Transformer alongside a custom educational PyTorch implementation of the original Transformer architecture. Quantitative evaluation using SacreBLEU and chrF++ confirms high translation fidelity and low latency.
+Presents the design, implementation, and empirical evaluation of TranslateMe, an end-to-end Neural Machine Translation (NMT) platform capable of many-to-many translation across 200+ languages without relying on English as an intermediary bridge language. The system incorporates Meta AI's NLLB-200 615M parameter Transformer alongside a custom educational PyTorch implementation of the original Transformer architecture. Quantitative evaluation using SacreBLEU and chrF++ confirms high translation fidelity and low latency.
 
 ---
 
@@ -37,7 +37,7 @@ Traditional commercial translation systems rely heavily on English-centric bridg
 
 ---
 
-### 6. Proposed System: LinguaAI
+### 6. Proposed System: TranslateMe
 - **Complete Local Engine**: Runs entirely on local hardware (PyTorch + Hugging Face Transformers).
 - **Dual Engine Architecture**:
   1. Production multilingual engine: NLLB-200 distilled 600M model.
@@ -112,7 +112,7 @@ Traditional commercial translation systems rely heavily on English-centric bridg
 ---
 
 ### 14. Conclusion
-LinguaAI successfully realizes a production-ready, academically rigorous Deep Learning translation platform that unifies state-of-the-art multilingual Transformers with transparent from-scratch implementations.
+TranslateMe successfully realizes a production-ready, academically rigorous Deep Learning translation platform that unifies state-of-the-art multilingual Transformers with transparent from-scratch implementations.
 
 ---
 

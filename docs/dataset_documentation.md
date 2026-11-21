@@ -1,7 +1,7 @@
 # Dataset Preparation & Preprocessing Pipeline
 
 ## 1. Overview
-LinguaAI includes a dataset curation, cleaning, and partitioning pipeline in `training/` designed to process parallel bilingual corpora.
+TranslateMe includes a dataset curation, cleaning, and partitioning pipeline in `ml_lab/training/` designed to process parallel bilingual corpora.
 
 ## 2. Preprocessing & Sanitization Pipeline
 Text cleaning logic is implemented in `training/preprocessing.py`:

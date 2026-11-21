@@ -1,5 +1,5 @@
 """
-LinguaAI FastAPI Application Entrypoint
+TranslateMe FastAPI Application Entrypoint
 Universal Multilingual Neural Machine Translation System
 """
 
@@ -20,7 +20,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
-logger = logging.getLogger("lingua_ai")
+logger = logging.getLogger("translateme")
 
 
 @asynccontextmanager
@@ -29,14 +29,14 @@ async def lifespan(app: FastAPI):
     Lifespan handler: warms up the multilingual Transformer model once
     upon server start so users experience fast translation without cold-start delay.
     """
-    logger.info("Initializing LinguaAI Deep Learning Translation Services...")
+    logger.info("Initializing TranslateMe Deep Learning Translation Services...")
     try:
         translation_engine.load_model()
-        logger.info("LinguaAI Backend startup complete. Ready to serve requests!")
+        logger.info("TranslateMe Backend startup complete. Ready to serve requests!")
     except Exception as e:
         logger.warning(f"Deferred model loading: {e}")
     yield
-    logger.info("Shutting down LinguaAI Translation Services.")
+    logger.info("Shutting down TranslateMe Translation Services.")
 
 
 app = FastAPI(

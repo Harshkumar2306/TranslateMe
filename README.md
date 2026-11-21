@@ -1,4 +1,4 @@
-# PolyTrans — Universal Multilingual Transformer-Based Translation System
+# TranslateMe — Universal Multilingual Transformer-Based Translation System
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyTorch 2.8](https://img.shields.io/badge/PyTorch-2.8-EE4C2C.svg)](https://pytorch.org/)
@@ -31,7 +31,7 @@
 
 ## 1. Project Overview
 
-**LinguaAI** is a complete, professional, research-oriented multilingual neural machine translation application. Unlike naive wrappers that make API calls to Google Translate or OpenAI, LinguaAI runs a genuine **Transformer-based Neural Machine Translation engine locally** using PyTorch and Hugging Face Transformers.
+**TranslateMe** is a complete, professional, research-oriented multilingual neural machine translation application. Unlike naive wrappers that make API calls to Google Translate or OpenAI, TranslateMe runs a genuine **Transformer-based Neural Machine Translation engine locally** using PyTorch and Hugging Face Transformers.
 
 It provides **direct many-to-many translation** across 200+ languages—including comprehensive support for Indian languages (Hindi, Tamil, Telugu, Malayalam, Kannada, Bengali, Marathi, Gujarati, Punjabi, Urdu, Sanskrit) and global languages (English, French, Spanish, German, Japanese, Korean, Chinese, Arabic, Russian)—without using English as an intermediate pivot.
 
@@ -52,11 +52,11 @@ It provides **direct many-to-many translation** across 200+ languages—includin
 
 ## 3. Deep Learning Architecture
 
-LinguaAI operates two complementary Transformer engines:
+TranslateMe operates two complementary Transformer engines:
 
 ```
 +-----------------------------------------------------------------------------------+
-|                                  LinguaAI Core                                    |
+|                                 TranslateMe Core                                  |
 +-----------------------------------------+-----------------------------------------+
 |                                         |                                         |
 |  [Engine A: Production Multilingual]    |  [Engine B: Educational Transformer]     |
@@ -114,7 +114,7 @@ The primary practical translation engine is Meta AI's **NLLB-200** (`facebook/nl
 ## 7. Directory Structure
 
 ```
-LinguaAI/
+TranslateMe/
 ├── frontend/             # React 18 + TypeScript + Vite UI
 │   ├── src/
 │   │   ├── pages/        # Translator, Voice, Documents, History, DL Lab, Analytics
@@ -220,7 +220,7 @@ source .venv/bin/activate
 python evaluation/evaluate.py
 ```
 
-### Benchmark Results (LinguaAI Parallel Test Suite):
+### Benchmark Results (TranslateMe Parallel Test Suite):
 | Model Engine | SacreBLEU | chrF++ | Avg Latency | Vocabulary |
 |---|---|---|---|---|
 | **Pretrained NLLB-200 (600M)** | **49.86** | **62.67** | **1.37s - 4.03s** | 256,204 tokens |
