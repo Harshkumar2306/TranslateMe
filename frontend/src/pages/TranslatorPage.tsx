@@ -137,12 +137,12 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
             <Cpu className="w-4 h-4 text-violet-200" />
             <span>Custom Seq2Seq Transformer (Vaswani et al., 2017)</span>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-800/90 text-white font-extrabold uppercase tracking-wider">
-              6.03M Params
+              27.97M Params
             </span>
           </div>
           <div className="flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
             <Layers className="w-3.5 h-3.5 text-indigo-500" />
-            <span>3 Enc / 3 Dec • 4 Heads • d_model=256 • 2,000 BPE Subwords</span>
+            <span>6 Enc / 6 Dec • 6 Heads • d_model=384 • 8,192 BPE Subwords</span>
           </div>
         </div>
 

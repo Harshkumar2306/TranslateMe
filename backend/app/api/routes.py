@@ -355,23 +355,23 @@ def get_model_specifications():
     return ModelInfoResponse(
         model_name="TranslateMe Custom Multilingual Transformer",
         model_type="Seq2Seq Transformer (Encoder-Decoder)",
-        num_parameters="6,033,408 (6.03M)",
-        parameters="6,033,408 (6.03M)",
-        layers=3,
-        attention_heads=4,
-        d_model=256,
-        d_ff=1024,
-        vocab_size="2,000 subwords",
-        tokenizer_type="Byte-Pair Encoding (BPE) Multilingual Subword Tokenizer",
+        num_parameters="27,974,144 (27.97M)",
+        parameters="27,974,144 (27.97M)",
+        layers=6,
+        attention_heads=6,
+        d_model=384,
+        d_ff=1536,
+        vocab_size="8,192 subwords",
+        tokenizer_type="Byte-Pair Encoding (BPE) Multilingual Subword Tokenizer (ByteLevel)",
         supported_languages_count=4,
         framework="Pure PyTorch (Vaswani et al., 2017)",
         device=str(custom_multilingual_engine.device),
         license="MIT Open Source (Own Independent Implementation)",
         attribution="Trained completely from scratch with PyTorch. No pretrained translation weights.",
         limitations=[
-            "Trained on curated 4-way multilingual seed corpus",
-            "Vocabulary size is 2,000 subwords via custom BPE tokenizer",
+            "Trained on curated 4-way multilingual parallel corpus (OPUS, TED2020, QED)",
+            "Vocabulary size is 8,192 subwords via custom ByteLevel BPE tokenizer",
             "Context length is optimized up to 128 subwords",
-            "Indicative research prototype demonstrating from-scratch seq2seq mechanics"
+            "Full seq2seq Transformer trained on Dual Tesla T4 GPUs with PyTorch AMP FP16"
         ]
     )

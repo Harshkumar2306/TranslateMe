@@ -38,7 +38,7 @@ export const ModelInfoPage: React.FC = () => {
           </div>
           <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Parameters</span>
           <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">
-            {info?.num_parameters || '6,033,408 (6.03M)'}
+            {info?.num_parameters || '27,974,144 (27.97M)'}
           </span>
           <span className="text-[11px] text-slate-500">Trainable From Random Init</span>
         </div>
@@ -48,8 +48,8 @@ export const ModelInfoPage: React.FC = () => {
             <Layers className="w-5 h-5" />
           </div>
           <span className="text-xs text-slate-400 block uppercase tracking-wider font-semibold">Vocabulary Size</span>
-          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">2,000 Subwords</span>
-          <span className="text-[11px] text-slate-500">Multilingual BPE Tokenizer</span>
+          <span className="text-xl font-bold text-slate-900 dark:text-white mt-1 block">8,192 Subwords</span>
+          <span className="text-[11px] text-slate-500">ByteLevel Multilingual BPE Tokenizer</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
@@ -81,19 +81,19 @@ export const ModelInfoPage: React.FC = () => {
           <div className="space-y-3 text-xs text-slate-600 dark:text-slate-300">
             <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Encoder / Decoder Layers:</span>
-              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">3 Encoder + 3 Decoder</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">6 Encoder + 6 Decoder</span>
             </div>
             <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Embedding Dimension (d_model):</span>
-              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">256</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">384</span>
             </div>
             <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Feedforward Dimension (d_ff):</span>
-              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">1024</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">1536</span>
             </div>
             <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Attention Heads:</span>
-              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">4 Heads (d_k = d_v = 64)</span>
+              <span className="font-mono text-violet-600 dark:text-violet-400 font-bold">6 Heads (d_k = d_v = 64)</span>
             </div>
             <div className="flex justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60">
               <span className="font-semibold text-slate-800 dark:text-slate-200">Weight Tying:</span>
