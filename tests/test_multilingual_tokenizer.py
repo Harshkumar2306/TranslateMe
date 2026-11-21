@@ -43,9 +43,9 @@ def test_tokenizer_training_and_roundtrip(tmp_path):
 
     # Test special token IDs
     assert tokenizer.pad_id == 0
-    assert tokenizer.sos_id == 1
-    assert tokenizer.eos_id == 2
-    assert tokenizer.unk_id == 3
+    assert tokenizer.unk_id == 1
+    assert tokenizer.sos_id == 2
+    assert tokenizer.eos_id == 3
 
     # Test encoding with target language control token
     hi_control_id = tokenizer.get_control_token_id("hi")

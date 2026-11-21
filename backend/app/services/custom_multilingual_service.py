@@ -66,21 +66,25 @@ class CustomMultilingualEngine:
             self.tokenizer = MultilingualSubwordTokenizer.load(tok_path)
 
             self.config = ckpt.get("config", {})
+            n_enc = self.config.get("num_encoder_layers", self.config.get("num_layers", 6))
+            n_dec = self.config.get("num_decoder_layers", self.config.get("num_layers", 6))
             self.model = Seq2SeqTransformer(
-                src_vocab_size=self.config.get("vocab_size", self.tokenizer.vocab_size),
-                tgt_vocab_size=self.config.get("vocab_size", self.tokenizer.vocab_size),
-                d_model=self.config.get("d_model", 256),
-                n_heads=self.config.get("n_heads", 4),
-                num_encoder_layers=self.config.get("num_layers", 3),
-                num_decoder_layers=self.config.get("num_layers", 3),
-                d_ff=self.config.get("d_ff", 1024),
+                src_vocab_size=self.config.get("src_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
+                tgt_vocab_size=self.config.get("tgt_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
+                d_model=self.config.get("d_model", 384),
+                n_heads=self.config.get("n_heads", 6),
+                num_encoder_layers=n_enc,
+                num_decoder_layers=n_dec,
+                d_ff=self.config.get("d_ff", 1536),
                 dropout=self.config.get("dropout", 0.1),
                 pad_idx=self.tokenizer.pad_id,
-                share_embeddings=True
+                share_embeddings=self.config.get("share_embeddings", True),
+                pre_ln=self.config.get("pre_ln", False)
             ).to(self.device)
 
             self.model.load_state_dict(ckpt["model_state_dict"])
             self.model.eval()
+            self._script_masks = {}
             self.is_loaded = True
             logger.info("Custom Multilingual Transformer loaded successfully!")
             return True
@@ -88,6 +92,53 @@ class CustomMultilingualEngine:
             logger.error(f"Failed to load custom Multilingual Transformer: {e}", exc_info=True)
             self.is_loaded = False
             return False
+
+    def get_script_mask(self, target_lang: str) -> Optional[torch.Tensor]:
+        """
+        Builds a boolean tensor of shape (vocab_size,) where True indicates
+        tokens that belong to foreign alphabets and MUST be masked out.
+        Prevents script contamination (e.g. Tamil characters appearing in Hindi).
+        """
+        if self.tokenizer is None or not hasattr(self, "model") or self.model is None:
+            return None
+        if not hasattr(self, "_script_masks"):
+            self._script_masks = {}
+
+        if target_lang in self._script_masks:
+            return self._script_masks[target_lang]
+
+        script_map = {"hi": "Devanagari", "ta": "Tamil", "te": "Telugu", "en": "Latin"}
+        target_script = script_map.get(target_lang)
+        if not target_script:
+            return None
+
+        vocab_size = self.tokenizer.vocab_size
+        disallowed = torch.zeros(vocab_size, dtype=torch.bool, device=self.device)
+
+        for i in range(vocab_size):
+            if i in (self.tokenizer.pad_id, self.tokenizer.sos_id, self.tokenizer.eos_id, self.tokenizer.unk_id):
+                continue
+            tok_str = self.tokenizer.tokenizer.id_to_token(i) or ""
+            if tok_str.startswith("<2"):
+                continue
+
+            for ch in tok_str:
+                cp = ord(ch)
+                if 0x0900 <= cp <= 0x097F and target_script != "Devanagari":
+                    disallowed[i] = True
+                    break
+                elif 0x0B80 <= cp <= 0x0BFF and target_script != "Tamil":
+                    disallowed[i] = True
+                    break
+                elif 0x0C00 <= cp <= 0x0C7F and target_script != "Telugu":
+                    disallowed[i] = True
+                    break
+                elif ((0x0041 <= cp <= 0x005A) or (0x0061 <= cp <= 0x007A)) and target_script != "Latin":
+                    disallowed[i] = True
+                    break
+
+        self._script_masks[target_lang] = disallowed
+        return disallowed
 
     def normalize_code(self, code: str) -> str:
         """Normalizes lang code to 'en', 'hi', 'ta', 'te'."""
@@ -138,13 +189,20 @@ class CustomMultilingualEngine:
                 "alternatives": []
             }
 
-        # Encode source sequence
-        src_token_ids = self.tokenizer.encode(text_clean, add_special_tokens=True)
+        # Automatic Truecasing for Latin source inputs
+        if src_code == "en" and text_clean and text_clean[0].islower():
+            text_clean = text_clean[0].upper() + text_clean[1:]
+
+        # Encode source sequence: target language tag prefix + source text
+        ctrl_id = self.tokenizer.get_control_token_id(tgt_code)
+        raw_ids = self.tokenizer.encode(text_clean, add_special_tokens=False)
+        src_token_ids = [self.tokenizer.sos_id, ctrl_id] + raw_ids + [self.tokenizer.eos_id]
         src_tensor = torch.tensor([src_token_ids], dtype=torch.long, device=self.device)
-        tgt_control_id = self.tokenizer.get_control_token_id(tgt_code)
 
         cross_attention_matrix = None
         alternatives = []
+
+        script_mask = self.get_script_mask(tgt_code)
 
         with torch.no_grad():
             if num_beams > 1:
@@ -154,14 +212,17 @@ class CustomMultilingualEngine:
                     max_len=64,
                     sos_idx=self.tokenizer.sos_id,
                     eos_idx=self.tokenizer.eos_id,
-                    prefix_tokens=[tgt_control_id]
+                    prefix_tokens=None,
+                    disallowed_mask=script_mask,
+                    no_repeat_ngram_size=2
                 )
-                best_seq = beams[0][0][0].tolist()
-                translated_text = self.tokenizer.decode(best_seq)
+                best_seq = [i for i in beams[0][0][0].tolist() if i not in (self.tokenizer.sos_id, self.tokenizer.eos_id, self.tokenizer.pad_id)]
+                translated_text = self.tokenizer.decode(best_seq).strip()
 
                 if return_alternatives and len(beams) > 1:
                     for b_seq, _ in beams[1:]:
-                        alt_text = self.tokenizer.decode(b_seq[0].tolist())
+                        alt_ids = [i for i in b_seq[0].tolist() if i not in (self.tokenizer.sos_id, self.tokenizer.eos_id, self.tokenizer.pad_id)]
+                        alt_text = self.tokenizer.decode(alt_ids).strip()
                         if alt_text and alt_text != translated_text and alt_text not in alternatives:
                             alternatives.append(alt_text)
             else:
@@ -169,10 +230,12 @@ class CustomMultilingualEngine:
                     src_tensor,
                     sos_idx=self.tokenizer.sos_id,
                     eos_idx=self.tokenizer.eos_id,
-                    prefix_tokens=[tgt_control_id],
+                    prefix_tokens=None,
                     max_len=64,
                     return_attention=return_attention,
-                    repetition_penalty=1.2
+                    repetition_penalty=1.2,
+                    disallowed_mask=script_mask,
+                    no_repeat_ngram_size=2
                 )
                 if return_attention:
                     out, attn = decode_res
@@ -181,7 +244,8 @@ class CustomMultilingualEngine:
                         cross_attention_matrix = attn[0].mean(dim=0).cpu().tolist()
                 else:
                     out = decode_res
-                translated_text = self.tokenizer.decode(out[0].tolist())
+                best_seq = [i for i in out[0].tolist() if i not in (self.tokenizer.sos_id, self.tokenizer.eos_id, self.tokenizer.pad_id)]
+                translated_text = self.tokenizer.decode(best_seq).strip()
 
         elapsed = round(time.time() - start_time, 4)
 

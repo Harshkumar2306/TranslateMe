@@ -49,8 +49,8 @@ class ScaledDotProductAttention(nn.Module):
 
         # 2. Apply attention mask if provided
         if mask is not None:
-            # Mask positions with a very large negative number so softmax evaluates to zero
-            scores = scores.masked_fill(mask == 0, -1e9)
+            # Mask positions with a large negative number safe for FP16 (-1e4)
+            scores = scores.masked_fill(mask == 0, -1e4)
 
         # 3. Softmax across key sequence dimension (sum to 1 per query position)
         attn_weights = F.softmax(scores, dim=-1)

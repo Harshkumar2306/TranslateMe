@@ -48,7 +48,7 @@ SUPPORTED_LANGUAGES: Dict[str, LanguageMeta] = {
     ),
 }
 
-SPECIAL_TOKENS = ["<pad>", "<sos>", "<eos>", "<unk>", "<2en>", "<2hi>", "<2ta>", "<2te>"]
+SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>", "<2en>", "<2hi>", "<2ta>", "<2te>"]
 
 
 def get_language(code: str) -> Optional[LanguageMeta]:

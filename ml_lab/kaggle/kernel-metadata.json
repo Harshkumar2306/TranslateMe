@@ -1,0 +1,16 @@
+{
+  "id": "hrsh0o23/translateme-custom-transformer-training",
+  "title": "TranslateMe Custom Transformer Training",
+  "code_file": "translateme_kaggle_trainer.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "hrsh0o23/translateme-multilingual-corpus"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}

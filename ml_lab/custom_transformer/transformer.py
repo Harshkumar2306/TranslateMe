@@ -86,9 +86,9 @@ class Generator(nn.Module):
     to convert decoder output vectors to token probability distributions.
     Section 3.4 of 'Attention Is All You Need'.
     """
-    def __init__(self, d_model: int, vocab_size: int):
+    def __init__(self, d_model: int, vocab_size: int, bias: bool = True):
         super().__init__()
-        self.proj = nn.Linear(d_model, vocab_size, bias=False)
+        self.proj = nn.Linear(d_model, vocab_size, bias=bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -284,11 +284,14 @@ class Seq2SeqTransformer(nn.Module):
         max_len: int = 64,
         prefix_tokens: Optional[List[int]] = None,
         return_attention: bool = False,
-        repetition_penalty: float = 1.0
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 2,
+        disallowed_mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Autoregressively generates target tokens using Greedy Search.
-        Supports target language prefix conditioning (e.g. `<2hi>`) and repetition penalty.
+        Supports target language prefix conditioning, anti-hallucination n-gram blocking,
+        and script-level vocabulary constraints.
         """
         self.eval()
         device = src.device
@@ -313,24 +316,40 @@ class Seq2SeqTransformer(nn.Module):
             else:
                 out = self.decode(ys, memory, src_mask, tgt_mask)
 
-            log_prob = self.generator(out[:, -1:])  # (batch_size, 1, vocab_size)
+            log_prob = self.generator(out[:, -1:]).view(-1).clone()  # (vocab_size,)
 
+            # 1. Apply script-level mask if provided
+            if disallowed_mask is not None:
+                log_prob.masked_fill_(disallowed_mask, -float("inf"))
+
+            # 2. Block immediate consecutive repeat
+            if ys.size(1) > 1:
+                last_tok = ys[0, -1].item()
+                log_prob[last_tok] = -float("inf")
+
+            # 3. Block repeated n-grams
+            seq_list = ys[0].tolist()
+            if no_repeat_ngram_size > 0 and len(seq_list) >= no_repeat_ngram_size:
+                prefix = tuple(seq_list[-(no_repeat_ngram_size - 1):])
+                for i in range(len(seq_list) - no_repeat_ngram_size + 1):
+                    if tuple(seq_list[i:i + no_repeat_ngram_size - 1]) == prefix:
+                        log_prob[seq_list[i + no_repeat_ngram_size - 1]] = -float("inf")
+
+            # 4. Standard repetition penalty for all previously generated tokens
             if repetition_penalty > 1.0 and ys.size(1) > 1:
-                logits = log_prob[0, -1].clone()
-                for token_id in set(ys[0].tolist()):
+                for token_id in set(seq_list):
                     if token_id == sos_idx or token_id == self.pad_idx:
                         continue
-                    if logits[token_id] < 0:
-                        logits[token_id] *= repetition_penalty
-                    else:
-                        logits[token_id] /= repetition_penalty
-                next_token = torch.argmax(logits).view(1, 1)
-            else:
-                next_token = torch.argmax(log_prob, dim=-1)  # (batch_size, 1)
+                    if log_prob[token_id] != -float("inf"):
+                        if log_prob[token_id] < 0:
+                            log_prob[token_id] *= repetition_penalty
+                        else:
+                            log_prob[token_id] /= repetition_penalty
 
+            next_token = torch.argmax(log_prob).view(1, 1)
             ys = torch.cat([ys, next_token], dim=1)
 
-            if (next_token == eos_idx).all():
+            if next_token.item() == eos_idx:
                 break
 
         if return_attention:
@@ -345,14 +364,17 @@ class Seq2SeqTransformer(nn.Module):
         max_len: int = 64,
         length_penalty: float = 0.6,
         repetition_penalty: float = 1.25,
+        no_repeat_ngram_size: int = 2,
         sos_idx: int = 1,
         eos_idx: int = 2,
-        prefix_tokens: Optional[List[int]] = None
+        prefix_tokens: Optional[List[int]] = None,
+        disallowed_mask: Optional[torch.Tensor] = None
     ) -> List[Tuple[torch.Tensor, float]]:
         """
-        Beam search decoding for sequence generation.
-        Returns top-ranked hypotheses along with length-normalized log-likelihood scores.
-        Supports length penalty normalization and repetition penalty.
+        Beam search decoding with strict anti-hallucination safeguards:
+        - Script masking: disallows foreign alphabet subwords
+        - N-gram blocking: prevents cyclic loops (e.g. repeated commas or phrases)
+        - Immediate repeat suppression
         """
         self.eval()
         device = src.device
@@ -373,24 +395,45 @@ class Seq2SeqTransformer(nn.Module):
             for seq, score in beams:
                 tgt_mask = make_tgt_mask(seq, self.pad_idx)
                 out = self.decode(seq, memory, src_mask, tgt_mask)
-                log_probs = self.generator(out[:, -1:]).view(-1)  # Shape: (vocab_size,)
+                raw_log_probs = self.generator(out[:, -1:]).view(-1)  # Shape: (vocab_size,)
+                log_probs = raw_log_probs.clone()
 
+                # 1. Apply script-level mask if provided
+                if disallowed_mask is not None:
+                    log_probs.masked_fill_(disallowed_mask, -float("inf"))
+
+                # 2. Block immediate consecutive repeat
+                if seq.size(1) > 1:
+                    last_tok = seq[0, -1].item()
+                    log_probs[last_tok] = -float("inf")
+
+                # 3. Block repeated n-grams
+                seq_list = seq[0].tolist()
+                if no_repeat_ngram_size > 0 and len(seq_list) >= no_repeat_ngram_size:
+                    prefix = tuple(seq_list[-(no_repeat_ngram_size - 1):])
+                    for i in range(len(seq_list) - no_repeat_ngram_size + 1):
+                        if tuple(seq_list[i:i + no_repeat_ngram_size - 1]) == prefix:
+                            log_probs[seq_list[i + no_repeat_ngram_size - 1]] = -float("inf")
+
+                # 4. Standard repetition penalty
                 if repetition_penalty > 1.0 and seq.size(1) > 1:
-                    logits = log_probs.clone()
-                    for token_id in set(seq[0].tolist()):
+                    for token_id in set(seq_list):
                         if token_id == sos_idx or token_id == self.pad_idx:
                             continue
-                        if logits[token_id] < 0:
-                            logits[token_id] *= repetition_penalty
-                        else:
-                            logits[token_id] /= repetition_penalty
-                    topk_probs, topk_indices = torch.topk(logits, beam_size * 2)
-                else:
-                    topk_probs, topk_indices = torch.topk(log_probs, beam_size * 2)
+                        if log_probs[token_id] != -float("inf"):
+                            if log_probs[token_id] < 0:
+                                log_probs[token_id] *= repetition_penalty
+                            else:
+                                log_probs[token_id] /= repetition_penalty
+
+                topk_probs, topk_indices = torch.topk(log_probs, beam_size * 2)
 
                 for prob, idx in zip(topk_probs, topk_indices):
+                    if prob.item() == -float("inf"):
+                        continue
                     cand_seq = torch.cat([seq, idx.view(1, 1)], dim=1)
-                    cand_score = score + prob.item()
+                    # Use unpenalized raw log prob for consistent candidate scoring
+                    cand_score = score + raw_log_probs[idx].item()
                     if idx.item() == eos_idx:
                         completed_beams.append((cand_seq, cand_score))
                     else:
@@ -405,7 +448,6 @@ class Seq2SeqTransformer(nn.Module):
             # Sort candidate hypotheses by length-normalized score
             def lp_score(cand):
                 s_len = cand[0].size(1)
-                # Length penalty: ((5 + len) / 6) ^ alpha
                 lp = ((5.0 + s_len) / 6.0) ** length_penalty
                 return cand[1] / lp
 

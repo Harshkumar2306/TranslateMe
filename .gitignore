@@ -45,9 +45,14 @@ datasets/raw/*
 !datasets/raw/.gitkeep
 datasets/processed/*
 !datasets/processed/.gitkeep
+ml_lab/datasets/raw_downloads/
+ml_lab/kaggle/output/
+ml_lab/kaggle/dataset/*.gz
 *.csv
 *.tsv
 *.parquet
+*.jsonl
+*.gz
 *.jsonl
 
 # Database

@@ -7,11 +7,9 @@ with target language direction tokens (<2en>, <2hi>, <2ta>, <2te>).
 
 import os
 from typing import List, Optional, Union, Iterable
-from tokenizers import Tokenizer
+from tokenizers import Tokenizer, decoders, pre_tokenizers, normalizers
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
-from tokenizers.normalizers import NFC
 
 from .language_registry import SPECIAL_TOKENS, get_control_token, is_supported_language
 
@@ -22,32 +20,36 @@ class MultilingualSubwordTokenizer:
     Trains vocabulary from scratch on multilingual text without pretrained weights.
     """
     PAD_TOKEN = "<pad>"
-    SOS_TOKEN = "<sos>"
+    SOS_TOKEN = "<bos>"
+    BOS_TOKEN = "<bos>"
     EOS_TOKEN = "<eos>"
     UNK_TOKEN = "<unk>"
 
     def __init__(self, tokenizer_file: Optional[str] = None):
         if tokenizer_file and os.path.exists(tokenizer_file):
             self.tokenizer = Tokenizer.from_file(tokenizer_file)
+            self.tokenizer.decoder = decoders.ByteLevel()
         else:
             self.tokenizer = Tokenizer(BPE(unk_token=self.UNK_TOKEN))
-            self.tokenizer.normalizer = NFC()
-            self.tokenizer.pre_tokenizer = Whitespace()
+            self.tokenizer.normalizer = normalizers.NFKC()
+            self.tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+            self.tokenizer.decoder = decoders.ByteLevel()
 
         # Cache special token IDs
         self._cache_special_token_ids()
 
     def _cache_special_token_ids(self):
         try:
-            self.pad_id = self.tokenizer.token_to_id(self.PAD_TOKEN) or 0
-            self.sos_id = self.tokenizer.token_to_id(self.SOS_TOKEN) or 1
-            self.eos_id = self.tokenizer.token_to_id(self.EOS_TOKEN) or 2
-            self.unk_id = self.tokenizer.token_to_id(self.UNK_TOKEN) or 3
+            self.pad_id = self.tokenizer.token_to_id("<pad>") if self.tokenizer.token_to_id("<pad>") is not None else 0
+            self.unk_id = self.tokenizer.token_to_id("<unk>") if self.tokenizer.token_to_id("<unk>") is not None else 1
+            bos_cand = self.tokenizer.token_to_id("<bos>")
+            self.sos_id = bos_cand if bos_cand is not None else (self.tokenizer.token_to_id("<sos>") or 2)
+            self.eos_id = self.tokenizer.token_to_id("<eos>") if self.tokenizer.token_to_id("<eos>") is not None else 3
         except Exception:
             self.pad_id = 0
-            self.sos_id = 1
-            self.eos_id = 2
-            self.unk_id = 3
+            self.unk_id = 1
+            self.sos_id = 2
+            self.eos_id = 3
 
     @property
     def vocab_size(self) -> int:
@@ -74,6 +76,7 @@ class MultilingualSubwordTokenizer:
             vocab_size=vocab_size,
             special_tokens=SPECIAL_TOKENS,
             min_frequency=min_frequency,
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
             show_progress=True
         )
         self.tokenizer.train_from_iterator(iterator, trainer=trainer)
