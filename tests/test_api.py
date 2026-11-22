@@ -98,8 +98,8 @@ def test_model_specs_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert "TranslateMe Custom Multilingual Transformer" in data["model_name"]
-    assert "6,033,408" in data["parameters"]
-    assert data["layers"] == 3
+    assert "27,974,144" in data["parameters"]
+    assert data["layers"] == 6
 
 
 def test_history_flow():
