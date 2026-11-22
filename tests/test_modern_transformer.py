@@ -212,3 +212,25 @@ def test_bulletproof_trainer_eta_and_progress_file(tmp_path):
     assert format_duration(65) == "1m 05s"
     assert format_duration(3665) == "1h 01m 05s"
 
+
+def test_gemma2_soft_capping_and_ngram_blocking():
+    config = ModernTransformerConfig.modern_small(vocab_size=100)
+    config.soft_cap = 30.0
+    model = ModernSeq2SeqTransformer(config)
+
+    # Verify soft capping bounds logits strictly within [-30, +30]
+    dummy_src = torch.randint(4, 100, (2, 8))
+    dummy_tgt = torch.randint(4, 100, (2, 6))
+    logits = model(dummy_src, dummy_tgt)
+    assert logits.max().item() <= 30.0 + 1e-4
+    assert logits.min().item() >= -30.0 - 1e-4
+
+    # Test generation with 3-gram blocking
+    gen = model.generate(dummy_src, max_len=15, num_beams=2, no_repeat_ngram_size=3)
+    assert len(gen) == 2
+    for seq in gen:
+        # Check no repeating 3-grams exist
+        ngrams = [tuple(seq[i:i+3]) for i in range(len(seq)-2)]
+        assert len(ngrams) == len(set(ngrams)), f"Found repeated n-gram in {seq}"
+
+

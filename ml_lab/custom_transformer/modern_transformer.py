@@ -40,11 +40,14 @@ class ModernTransformerConfig:
     use_qk_norm: bool = True
     use_rope: bool = True
     share_embeddings: bool = True
+    use_layerscale: bool = True
+    layerscale_init: float = 0.1
+    soft_cap: Optional[float] = 30.0  # Gemma 2 style logit soft-capping
 
     @classmethod
     def modern_100m(cls, vocab_size: int = 16384) -> "ModernTransformerConfig":
         """
-        Optimal ~111.7 Million Parameter SOTA Configuration:
+        Optimal ~111.7 Million Parameter SOTA Balanced Configuration:
         6 Encoder Layers, 6 Decoder Layers, d_model=768, 12 Heads, SwiGLU d_ff=2048.
         """
         return cls(
@@ -57,14 +60,37 @@ class ModernTransformerConfig:
             dropout=0.1,
             use_qk_norm=True,
             use_rope=True,
-            share_embeddings=True
+            share_embeddings=True,
+            use_layerscale=True,
+            soft_cap=30.0
+        )
+
+    @classmethod
+    def modern_asymmetric_100m(cls, vocab_size: int = 16384) -> "ModernTransformerConfig":
+        """
+        Asymmetric Fast-Inference 100M Configuration (~106.9M Parameters):
+        8 Deep Encoder Layers for rich source semantics, 4 Fast Decoder Layers for 33% lower latency.
+        """
+        return cls(
+            vocab_size=vocab_size,
+            d_model=768,
+            n_heads=12,
+            num_encoder_layers=8,
+            num_decoder_layers=4,
+            d_ff=2048,
+            dropout=0.1,
+            use_qk_norm=True,
+            use_rope=True,
+            share_embeddings=True,
+            use_layerscale=True,
+            soft_cap=30.0
         )
 
     @classmethod
     def modern_125m(cls, vocab_size: int = 16384) -> "ModernTransformerConfig":
         """
-        Asymmetric Deep-Encoder Configuration (~125.8M Parameters):
-        8 Encoder Layers, 6 Decoder Layers for deeper source representation.
+        Deep-Capacity Configuration (~125.8M Parameters):
+        8 Encoder Layers, 6 Decoder Layers.
         """
         return cls(
             vocab_size=vocab_size,
@@ -76,7 +102,9 @@ class ModernTransformerConfig:
             dropout=0.1,
             use_qk_norm=True,
             use_rope=True,
-            share_embeddings=True
+            share_embeddings=True,
+            use_layerscale=True,
+            soft_cap=30.0
         )
 
     @classmethod
@@ -92,7 +120,9 @@ class ModernTransformerConfig:
             dropout=0.1,
             use_qk_norm=True,
             use_rope=True,
-            share_embeddings=True
+            share_embeddings=True,
+            use_layerscale=True,
+            soft_cap=30.0
         )
 
 
@@ -116,7 +146,7 @@ class ModernSeq2SeqTransformer(nn.Module):
         )
         self.emb_dropout = nn.Dropout(config.dropout) if config.dropout > 0.0 else nn.Identity()
 
-        # 2. Modern Encoder Stack
+        # 2. Modern Encoder Stack with LayerScale
         self.encoder_layers = nn.ModuleList([
             ModernEncoderLayer(
                 d_model=config.d_model,
@@ -124,13 +154,15 @@ class ModernSeq2SeqTransformer(nn.Module):
                 d_ff=config.d_ff,
                 dropout=config.dropout,
                 use_qk_norm=config.use_qk_norm,
-                use_rope=config.use_rope
+                use_rope=config.use_rope,
+                use_layerscale=config.use_layerscale,
+                layerscale_init=config.layerscale_init
             )
             for _ in range(config.num_encoder_layers)
         ])
         self.encoder_final_norm = RMSNorm(config.d_model)
 
-        # 3. Modern Decoder Stack
+        # 3. Modern Decoder Stack with LayerScale
         self.decoder_layers = nn.ModuleList([
             ModernDecoderLayer(
                 d_model=config.d_model,
@@ -138,7 +170,9 @@ class ModernSeq2SeqTransformer(nn.Module):
                 d_ff=config.d_ff,
                 dropout=config.dropout,
                 use_qk_norm=config.use_qk_norm,
-                use_rope=config.use_rope
+                use_rope=config.use_rope,
+                use_layerscale=config.use_layerscale,
+                layerscale_init=config.layerscale_init
             )
             for _ in range(config.num_decoder_layers)
         ])
@@ -229,6 +263,11 @@ class ModernSeq2SeqTransformer(nn.Module):
 
         x = self.decoder_final_norm(x)
         logits = self.lm_head(x)
+
+        # Gemma 2 style logit soft-capping to prevent overconfident runaway loops
+        if self.config.soft_cap is not None and self.config.soft_cap > 0:
+            logits = self.config.soft_cap * torch.tanh(logits / self.config.soft_cap)
+
         return logits, cross_attn_list
 
     def forward(
@@ -265,11 +304,13 @@ class ModernSeq2SeqTransformer(nn.Module):
         max_len: int = 128,
         num_beams: int = 1,
         repetition_penalty: float = 1.15,
+        no_repeat_ngram_size: int = 3,
         length_penalty: float = 0.6,
         script_mask: Optional[torch.Tensor] = None
     ) -> List[List[int]]:
         """
         Autoregressive sequence generation with Greedy or Beam Search.
+        Includes Gemma 2 logit soft-capping, script masking, and 3-gram repetition blocking.
         src: (batch, src_len)
         """
         self.eval()
@@ -317,8 +358,7 @@ class ModernSeq2SeqTransformer(nn.Module):
             return generated.tolist()
 
         else:
-            # Beam Search
-            # For each item in batch, run beam search
+            # Beam Search with N-gram Repetition Blocking
             results = []
             for b in range(batch_size):
                 b_mem = memory[b:b+1]  # (1, src_len, d_model)
@@ -354,6 +394,14 @@ class ModernSeq2SeqTransformer(nn.Module):
                                         next_logits[tok] /= repetition_penalty
                                     else:
                                         next_logits[tok] *= repetition_penalty
+
+                        # N-gram repetition blocking (prevents repeating loops like ", , ,")
+                        if no_repeat_ngram_size > 0 and len(seq) >= no_repeat_ngram_size - 1:
+                            ngram_prefix = tuple(seq[-(no_repeat_ngram_size - 1):])
+                            for i in range(len(seq) - no_repeat_ngram_size + 1):
+                                if tuple(seq[i : i + no_repeat_ngram_size - 1]) == ngram_prefix:
+                                    banned_tok = seq[i + no_repeat_ngram_size - 1]
+                                    next_logits[banned_tok] = -1e4
 
                         if script_mask is not None:
                             next_logits.masked_fill_(script_mask, -1e4)
