@@ -737,7 +737,14 @@ class Kaggle100MTrainer:
         total_tokens = 0
         self.optimizer.zero_grad()
 
+        # Mid-epoch resume: skip batches that were already processed in this epoch
+        batches_done_in_epoch = self.global_step % num_batches if (self.global_step > 0 and self.epoch < total_epochs) else 0
+        if batches_done_in_epoch > 0:
+            print(f"  [MID-EPOCH RESUME] Fast-forwarding: skipping already trained batches 0 to {batches_done_in_epoch}...")
+
         for batch_idx, batch in enumerate(train_loader):
+            if batch_idx < batches_done_in_epoch:
+                continue
             src = batch["src"].to(self.device, non_blocking=True)
             tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
             tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
@@ -958,8 +965,13 @@ def main(args_list: Optional[List[str]] = None):
         save_every_steps=1000
     )
 
+    # 6. Auto-Resume Check: explicit flag or latest checkpoint on disk
+    latest_ckpt = Path(trainer.checkpoint_dir) / "checkpoint_latest.pt"
     if args.resume and os.path.exists(args.resume):
         trainer.resume_from_checkpoint(args.resume)
+    elif latest_ckpt.exists():
+        print(f"\n[AUTO-RESUME] Found existing checkpoint at {latest_ckpt}! Resuming without losing progress...")
+        trainer.resume_from_checkpoint(str(latest_ckpt))
 
     print(f"\n[Phase 5] Starting Training for {args.epochs} Epochs...")
     for epoch in range(trainer.epoch, args.epochs):
