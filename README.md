@@ -5,29 +5,30 @@
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 35 Passed](https://img.shields.io/badge/Tests-35%20Passed-brightgreen.svg)](tests/)
+[![Tests: 40 Passed](https://img.shields.io/badge/Tests-40%20Passed-brightgreen.svg)](tests/)
 
 > **A 100% Genuine From-Scratch Multilingual Neural Machine Translation System.**  
 > Built as an advanced Deep Learning research system featuring an independently implemented PyTorch Sequence-to-Sequence Transformer initialized randomly and trained through our own training pipeline across English, Hindi, Tamil, and Telugu. Zero pretrained translation weights (no NLLB, no HuggingFace, no mBART).
 
 ---
 
-## Key Achievements & Guarantees
+## Key Achievements & Engineering Highlights
 
 1. **Pure PyTorch Architecture**: Implemented entirely from scratch in `ml_lab/custom_transformer/` without using `torch.nn.Transformer` or Hugging Face model classes.
-2. **Production 27.97M Parameter Model**: Trained across 10 epochs on Kaggle Dual Tesla T4 GPUs on 183,314 parallel pairs with PyTorch AMP FP16, reaching a validation loss of **2.2957**.
-3. **Modern SOTA 100M+ Architecture (`TranslateMe-V2`)**:
-   - **Pre-LN with RMSNorm**: Zero mean-centering overhead; provides direct gradient highway for deep networks.
-   - **Rotary Position Embeddings (`RoPE`)**: Relative distance-aware token rotations for cross-lingual reordering.
-   - **SwiGLU Gated Feed-Forward**: Bilinear gated activations replacing basic ReLU.
-   - **QK-Norm & FlashAttention-2**: RMSNorm on queries & keys to eliminate logit explosion, coupled with PyTorch fused `scaled_dot_product_attention`.
-   - **111.7M Parameter Configuration**: Optimized 6-layer Encoder + 6-layer Decoder architecture ($d_{\text{model}}=768, d_{\text{ff}}=2048, 12\text{ heads}$).
+2. **Trained 27.97M Baseline Model**: Trained across 10 epochs on Kaggle Dual Tesla T4 GPUs on 183,314 parallel pairs with PyTorch AMP FP16, reaching a validation loss of **2.2957**.
+3. **Modern 100M+ Transformer Architecture (`TranslateMe-V2`)**:
+   - **Pre-LN with RMSNorm**: Eliminates mean-centering overhead; provides direct gradient highways for deep stacks.
+   - **Rotary Position Embeddings (`RoPE`)**: Relative distance-aware token rotations for causal and encoder attention.
+   - **SwiGLU Gated Feed-Forward**: Bilinear gated linear activations replacing standard 2-matrix FFNs.
+   - **QK-Norm & PyTorch SDPA**: RMSNorm on queries and keys to prevent attention logit explosion, combined with PyTorch fused `scaled_dot_product_attention`.
+   - **111.72M Parameter Balanced Configuration**: Verified 6-layer Encoder + 6-layer Decoder architecture ($d_{\text{model}}=768, d_{\text{ff}}=2048, 12\text{ heads}$).
 4. **Resumable Training Pipeline with Pause Feature**:
-   - **Touch-File Pause**: Gracefully pauses training when `pause.flag` is detected, writing `checkpoint_latest.pt` without losing compute.
-   - **Signal Traps**: Catches `SIGINT` (Ctrl+C) and `SIGTERM` to safely checkpoint.
-   - **Deterministic Resume**: Restores model weights, AdamW 1st & 2nd moments, AMP GradScaler state, LR scheduler step, and CPU/CUDA RNG states.
-5. **ByteLevel Multilingual Subword Tokenizer**: A shared 8,192 Byte-Pair Encoding (BPE) subword vocabulary trained from scratch across Latin, Devanagari, Tamil, and Telugu scripts, complete with direction control tokens (`<2en>`, `<2hi>`, `<2ta>`, `<2te>`).
-6. **Scientifically Honest Evaluation**: 35/35 passing unit tests covering architecture, causal masking, future token leakage, tokenizer roundtrips, and API endpoints.
+   - **Touch-File Pause**: Gracefully pauses training when `pause.flag` is detected, atomically writing `checkpoint_latest.pt` without losing compute.
+   - **Signal Traps**: Intercepts `SIGINT` (Ctrl+C) and `SIGTERM` to safely checkpoint.
+   - **Deterministic Resume**: Restores model weights, AdamW 1st & 2nd moments, AMP GradScaler state, LR scheduler step, and full RNG states (Torch CPU/CUDA, Python, NumPy).
+   - **Exact Gradient Accumulation & Token-Weighted Loss**: Dynamic scaling for partial final groups and token-weighted validation loss.
+5. **ByteLevel Multilingual Subword Tokenizer**: A shared 8,192 Byte-Pair Encoding (BPE) subword vocabulary trained from scratch across Latin, Devanagari, Tamil, and Telugu scripts with canonical Unicode NFC normalization and direction control tokens (`<2en>`, `<2hi>`, `<2ta>`, `<2te>`).
+6. **Scientifically Honest Evaluation**: 40/40 passing unit tests covering architecture, causal masking, future token leakage, tokenizer roundtrips, overfitting memorization, batch decoding clamping, and API endpoints. Partitioned records guarantee zero exact train/test overlap.
 
 ---
 
@@ -43,15 +44,15 @@
 * **Vocabulary Size**: 8,192 ByteLevel BPE multilingual subwords
 * **Hardware Execution**: Apple Silicon GPU (`mps`) / NVIDIA CUDA / CPU
 
-### 2. Modern SOTA 100M+ Architecture
+### 2. Modern 100M+ Architecture (`TranslateMe-V2`)
 * **Implementation**: [`ml_lab/custom_transformer/modern_transformer.py`](ml_lab/custom_transformer/modern_transformer.py)
 * **Blueprint**: [`docs/MODERN_100M_TRANSFORMER_BLUEPRINT.md`](docs/MODERN_100M_TRANSFORMER_BLUEPRINT.md)
-* **Total Parameters**: **111,700,224 (111.7M)**
-* **Encoder / Decoder Layers**: 6 Encoder + 6 Decoder (or asymmetric 8 Enc / 6 Dec for 125.8M)
+* **Total Parameters**: **111,723,264 (111.72M)**
+* **Encoder / Decoder Layers**: 6 Encoder + 6 Decoder (or asymmetric 8 Enc / 4 Dec for 106.9M)
 * **Attention Heads**: **12 Heads** ($d_k = d_v = 64$) with QK-Norm and RoPE
 * **Hidden Dimension ($d_{\text{model}}$)**: **768**
-* **Feed-Forward Dimension ($d_{\text{ff}}$)**: **2048 (SwiGLU)**
-* **Vocabulary Size**: 16,384 multilingual subwords
+* **Feed-Forward Dimension ($d_{\text{ff}}$)**: **2048 (SwiGLU, 3-projection matrices)**
+* **Vocabulary Size**: 16,384 multilingual subwords with 3-way tied embeddings
 
 ---
 
@@ -91,8 +92,9 @@ TranslateMe/
 │   │   └── translateme_kaggle_trainer.ipynb # Kaggle Training Notebook
 │   └── checkpoints/              # Trained PyTorch Model Checkpoints (.pt)
 │
-├── tests/                        # Comprehensive Unit & Architecture Test Suite (35 Tests)
-│   ├── test_modern_transformer.py # Modern SOTA RoPE, RMSNorm, SwiGLU, & Resumable Trainer Tests
+├── tests/                        # Comprehensive Unit & Architecture Test Suite (40 Tests)
+│   ├── test_overfitting.py       # Empirical Memorization, Beam Search & Clamping Tests
+│   ├── test_modern_transformer.py # RoPE, RMSNorm, SwiGLU, LayerScale, & Resumable Trainer Tests
 │   ├── test_custom_transformer.py # Masking, Attention & Shape Invariance Tests
 │   ├── test_multilingual_tokenizer.py # Subword Encoding/Decoding Tests
 │   └── test_api.py               # REST API Endpoint Tests

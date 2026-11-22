@@ -31,7 +31,7 @@ class MultilingualSubwordTokenizer:
             self.tokenizer.decoder = decoders.ByteLevel()
         else:
             self.tokenizer = Tokenizer(BPE(unk_token=self.UNK_TOKEN))
-            self.tokenizer.normalizer = normalizers.NFKC()
+            self.tokenizer.normalizer = normalizers.NFC()
             self.tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
             self.tokenizer.decoder = decoders.ByteLevel()
 

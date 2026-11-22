@@ -63,7 +63,7 @@ To eliminate **all** data leakage, splits are partitioned at the **aligned recor
 | **Held-Out Test** | **10%** | 4 Records | 24 Pairs | Final independent SacreBLEU & chrF++ evaluation |
 | **Total** | **100%** | **40 Records** | **240 Pairs** | Full Corpus |
 
-### Zero Data Leakage Guarantee
-1. **Zero Exact Overlap**: No sentence in test appears in train or validation ($0.00\%$).
-2. **Zero Cross-Direction Leakage**: If English sentence $A$ translates to Hindi sentence $B$ in train, $B \rightarrow A$ will never appear in validation or test.
-3. **Tokenizer Isolation**: Tokenizer subwords were learned strictly from the 32 training records.
+### Record-Level Split Isolation & Leakage Verification
+1. **No Exact Aligned-Record Overlap**: No sentence in the held-out test split appears in the training or validation partitions ($0.00\%$ exact match).
+2. **Directional Expansion Isolation**: Splits are partitioned at the aligned 4-way record level prior to directional pair creation. If English sentence $A$ translates to Hindi sentence $B$ in training, reverse pair $B \rightarrow A$ is strictly confined to the training partition and will never appear in validation or test.
+3. **Tokenizer Isolation**: Subword vocabulary merges were trained strictly on the training partition text.

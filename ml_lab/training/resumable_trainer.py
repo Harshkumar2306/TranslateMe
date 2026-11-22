@@ -13,6 +13,11 @@ Features:
 - Label Smoothing Cross-Entropy Loss
 """
 
+import random
+try:
+    import numpy as np
+except ImportError:
+    np = None
 import os
 import sys
 import time
@@ -183,7 +188,9 @@ class BulletproofTrainer:
             "val_loss_history": self.val_loss_history,
             "rng_state": {
                 "cpu": torch.get_rng_state(),
-                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+                "python": random.getstate(),
+                "numpy": np.random.get_state() if np is not None else None
             },
             "timestamp": time.time(),
             "extra_meta": extra_meta or {}
@@ -248,7 +255,11 @@ class BulletproofTrainer:
                 torch.set_rng_state(rng["cpu"])
             if torch.cuda.is_available() and rng.get("cuda") is not None:
                 torch.cuda.set_rng_state_all(rng["cuda"])
-            print("  - Deterministic RNG states restored.")
+            if rng.get("python") is not None:
+                random.setstate(rng["python"])
+            if np is not None and rng.get("numpy") is not None:
+                np.random.set_state(rng["numpy"])
+            print("  - Deterministic RNG states restored (Torch, Python, NumPy).")
 
         print(f"[RESUME SUCCESS] Ready to continue from Epoch {self.epoch + 1}, Step {self.global_step} (Best Val: {self.best_val_loss:.4f})")
         return True
@@ -300,19 +311,23 @@ class BulletproofTrainer:
             tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
             tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
 
+            # Exact accumulation chunk size (prevents underweighting incomplete final group)
+            chunk_start = (batch_idx // self.gradient_accumulation_steps) * self.gradient_accumulation_steps
+            actual_chunk_size = min(self.gradient_accumulation_steps, num_batches - chunk_start)
+
             # 2. Forward pass with mixed precision AMP
             with autocast("cuda", enabled=self.use_amp):
                 logits = self.model(src, tgt_in)
-                loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
-                loss = loss / self.gradient_accumulation_steps
+                raw_loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+                loss = raw_loss / actual_chunk_size
 
             # 3. Backward pass
             self.scaler.scale(loss).backward()
 
             batch_tokens = (tgt_out != self.model.pad_idx).sum().item()
             total_tokens += batch_tokens
-            running_loss += loss.item() * self.gradient_accumulation_steps
-            epoch_loss += loss.item() * self.gradient_accumulation_steps
+            running_loss += raw_loss.item()
+            epoch_loss += raw_loss.item()
 
             # 4. Optimizer step after gradient accumulation
             if (batch_idx + 1) % self.gradient_accumulation_steps == 0 or (batch_idx + 1) == num_batches:
@@ -426,10 +441,20 @@ class BulletproofTrainer:
 
     @torch.no_grad()
     def evaluate(self, val_loader: DataLoader) -> float:
-        """Computes validation loss across evaluation dataset."""
+        """
+        Computes token-weighted validation loss across evaluation dataset:
+        Loss = (Sum of token cross-entropy losses) / (Total non-padding target tokens)
+        Eliminates sequence-length distortion compared to batch-averaging.
+        """
         self.model.eval()
-        total_loss = 0.0
-        num_batches = len(val_loader)
+        total_token_loss = 0.0
+        total_valid_tokens = 0
+
+        # Exact token-weighted cross-entropy loss without label smoothing for evaluation
+        sum_criterion = nn.CrossEntropyLoss(
+            ignore_index=self.model.pad_idx,
+            reduction="sum"
+        )
 
         for batch in val_loader:
             src = batch["src"].to(self.device, non_blocking=True)
@@ -438,11 +463,14 @@ class BulletproofTrainer:
 
             with autocast("cuda", enabled=self.use_amp):
                 logits = self.model(src, tgt_in)
-                loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
-                total_loss += loss.item()
+                batch_loss = sum_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+
+            valid_tokens = (tgt_out != self.model.pad_idx).sum().item()
+            total_token_loss += batch_loss.item()
+            total_valid_tokens += valid_tokens
 
         self.model.train()
-        return total_loss / max(num_batches, 1)
+        return total_token_loss / max(total_valid_tokens, 1)
 
 
 # Maintain alias for backward compatibility

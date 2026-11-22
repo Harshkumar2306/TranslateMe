@@ -124,6 +124,8 @@ class CustomMultilingualEngine:
 
             for ch in tok_str:
                 cp = ord(ch)
+                # Prevent cross-Indic script contamination (e.g. Tamil in Hindi)
+                # Note: Latin alphanumeric acronyms, ASCII digits, and punctuation are permitted in all targets
                 if 0x0900 <= cp <= 0x097F and target_script != "Devanagari":
                     disallowed[i] = True
                     break
@@ -131,9 +133,6 @@ class CustomMultilingualEngine:
                     disallowed[i] = True
                     break
                 elif 0x0C00 <= cp <= 0x0C7F and target_script != "Telugu":
-                    disallowed[i] = True
-                    break
-                elif ((0x0041 <= cp <= 0x005A) or (0x0061 <= cp <= 0x007A)) and target_script != "Latin":
                     disallowed[i] = True
                     break
 
@@ -189,9 +188,7 @@ class CustomMultilingualEngine:
                 "alternatives": []
             }
 
-        # Automatic Truecasing for Latin source inputs
-        if src_code == "en" and text_clean and text_clean[0].islower():
-            text_clean = text_clean[0].upper() + text_clean[1:]
+
 
         # Encode source sequence: target language tag prefix + source text
         ctrl_id = self.tokenizer.get_control_token_id(tgt_code)

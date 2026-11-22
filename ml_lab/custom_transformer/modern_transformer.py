@@ -268,7 +268,7 @@ class ModernSeq2SeqTransformer(nn.Module):
         if self.config.soft_cap is not None and self.config.soft_cap > 0:
             logits = self.config.soft_cap * torch.tanh(logits / self.config.soft_cap)
 
-        return logits, cross_attn_list
+        return logits.contiguous(), cross_attn_list
 
     def forward(
         self,
@@ -306,11 +306,13 @@ class ModernSeq2SeqTransformer(nn.Module):
         repetition_penalty: float = 1.15,
         no_repeat_ngram_size: int = 3,
         length_penalty: float = 0.6,
-        script_mask: Optional[torch.Tensor] = None
+        script_mask: Optional[torch.Tensor] = None,
+        prefix_tokens: Optional[List[int]] = None
     ) -> List[List[int]]:
         """
         Autoregressive sequence generation with Greedy or Beam Search.
-        Includes Gemma 2 logit soft-capping, script masking, and 3-gram repetition blocking.
+        Includes Gemma 2 logit soft-capping, script masking, 3-gram repetition blocking,
+        and robust finished-sequence clamping for batch inference.
         src: (batch, src_len)
         """
         self.eval()
@@ -320,9 +322,14 @@ class ModernSeq2SeqTransformer(nn.Module):
         src_mask = self.make_src_mask(src)
         memory, _ = self.encode(src, src_mask=src_mask, return_attn=False)
 
+        if prefix_tokens is not None and len(prefix_tokens) > 0:
+            init_tokens = [self.bos_idx] + prefix_tokens
+        else:
+            init_tokens = [self.bos_idx]
+
         if num_beams == 1:
-            # Greedy decoding
-            generated = torch.full((batch_size, 1), self.bos_idx, dtype=torch.long, device=device)
+            # Greedy decoding with batch-correct finished sequence clamping
+            generated = torch.tensor([init_tokens] * batch_size, dtype=torch.long, device=device)
             finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
             for _ in range(max_len):
@@ -349,34 +356,44 @@ class ModernSeq2SeqTransformer(nn.Module):
                     next_token_logits.masked_fill_(script_mask, -1e4)
 
                 next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+
+                # Correctness fix: finished sequences are clamped to pad_idx
+                next_tokens = torch.where(
+                    finished.unsqueeze(1),
+                    torch.full_like(next_tokens, self.pad_idx),
+                    next_tokens
+                )
+                finished = finished | (next_tokens.squeeze(-1) == self.eos_idx)
                 generated = torch.cat([generated, next_tokens], dim=-1)
 
-                finished = finished | (next_tokens.squeeze(-1) == self.eos_idx)
                 if finished.all():
                     break
 
-            return generated.tolist()
+            # Strip trailing padding tokens per sentence
+            results = []
+            for seq in generated.tolist():
+                clean_seq = []
+                for tok in seq:
+                    clean_seq.append(tok)
+                    if tok == self.eos_idx:
+                        break
+                results.append(clean_seq)
+            return results
 
         else:
-            # Beam Search with N-gram Repetition Blocking
+            # Beam Search with completed hypothesis separation and length normalization
             results = []
             for b in range(batch_size):
                 b_mem = memory[b:b+1]  # (1, src_len, d_model)
                 b_mask = src_mask[b:b+1]
 
-                # Initialize beam: (seq, log_prob, finished)
-                beams = [([self.bos_idx], 0.0, False)]
+                beams = [(init_tokens, 0.0)]
+                completed: List[Tuple[List[int], float]] = []
 
                 for _ in range(max_len):
                     all_candidates = []
-                    all_finished = True
 
-                    for seq, score, done in beams:
-                        if done:
-                            all_candidates.append((seq, score, True))
-                            continue
-
-                        all_finished = False
+                    for seq, score in beams:
                         input_tensor = torch.tensor([seq], dtype=torch.long, device=device)
                         logits, _ = self.decode_step(
                             input_tensor,
@@ -412,23 +429,38 @@ class ModernSeq2SeqTransformer(nn.Module):
                         for lp, tok in zip(topk_probs.tolist(), topk_tokens.tolist()):
                             new_seq = seq + [tok]
                             new_score = score + lp
-                            new_done = (tok == self.eos_idx)
-                            all_candidates.append((new_seq, new_score, new_done))
+                            if tok == self.eos_idx:
+                                completed.append((new_seq, new_score))
+                            else:
+                                all_candidates.append((new_seq, new_score))
 
-                    if all_finished:
-                        break
-
-                    # Rank by length-normalized score
                     def score_fn(candidate):
-                        seq, score, done = candidate
+                        seq, score = candidate
                         # Length penalty formula: ((5 + len) / 6) ^ alpha
-                        lp = ((5.0 + len(seq)) / 6.0) ** length_penalty
+                        lp = ((5.0 + len(seq)) / 6.0) ** length_penalty if length_penalty > 0 else 1.0
                         return score / lp
+
+                    # Robust early stopping: break only if completed candidates dominate active beams
+                    if len(completed) >= num_beams:
+                        best_active = max(score_fn(c) for c in all_candidates) if all_candidates else -float("inf")
+                        worst_completed = min(score_fn(c) for c in completed[:num_beams])
+                        if worst_completed >= best_active:
+                            break
 
                     ordered = sorted(all_candidates, key=score_fn, reverse=True)
                     beams = ordered[:num_beams]
+                    if not beams:
+                        break
 
-                best_seq = beams[0][0]
+                # Combine completed hypotheses with any surviving beams
+                pool = completed if completed else beams
+                def final_score_fn(candidate):
+                    seq, score = candidate
+                    lp = ((5.0 + len(seq)) / 6.0) ** length_penalty if length_penalty > 0 else 1.0
+                    return score / lp
+
+                ordered_final = sorted(pool, key=final_score_fn, reverse=True)
+                best_seq = ordered_final[0][0]
                 results.append(best_seq)
 
             return results
