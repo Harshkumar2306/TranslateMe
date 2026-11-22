@@ -399,7 +399,6 @@ class ModernSeq2SeqTransformer(nn.Module):
                         break
                 results.append(clean_seq)
             return results
-
         else:
             # Beam Search with completed hypothesis separation and length normalization
             results = []
@@ -484,3 +483,65 @@ class ModernSeq2SeqTransformer(nn.Module):
                 results.append(best_seq)
 
             return results
+
+    @torch.no_grad()
+    def greedy_decode(
+        self,
+        src: torch.Tensor,
+        sos_idx: int = 2,
+        eos_idx: int = 3,
+        max_len: int = 64,
+        prefix_tokens: Optional[List[int]] = None,
+        return_attention: bool = False,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 2,
+        disallowed_mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """Polymorphic greedy decoding wrapper matching classical Seq2SeqTransformer signature."""
+        prefix = [sos_idx] + (prefix_tokens or [])
+        res = self.generate(
+            src=src,
+            max_len=max_len,
+            num_beams=1,
+            prefix_tokens=prefix,
+            return_attention=return_attention,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            disallowed_mask=disallowed_mask
+        )
+        if return_attention:
+            tokens, attn = res
+            return tokens, attn
+        return res, None
+
+    @torch.no_grad()
+    def beam_search_decode(
+        self,
+        src: torch.Tensor,
+        beam_size: int = 3,
+        max_len: int = 64,
+        sos_idx: int = 2,
+        eos_idx: int = 3,
+        prefix_tokens: Optional[List[int]] = None,
+        disallowed_mask: Optional[torch.Tensor] = None,
+        no_repeat_ngram_size: int = 2,
+        repetition_penalty: float = 1.0
+    ) -> List[Tuple[torch.Tensor, float]]:
+        """Polymorphic beam search decoding wrapper returning [(seq_tensor, score)] matching classical signature."""
+        prefix = [sos_idx] + (prefix_tokens or [])
+        res = self.generate(
+            src=src,
+            max_len=max_len,
+            num_beams=beam_size,
+            prefix_tokens=prefix,
+            return_attention=False,
+            repetition_penalty=repetition_penalty,
+            no_repeat_ngram_size=no_repeat_ngram_size,
+            disallowed_mask=disallowed_mask
+        )
+        out = []
+        for seq in res:
+            if seq.dim() == 1:
+                seq = seq.unsqueeze(0)
+            out.append((seq, 0.0))
+        return out

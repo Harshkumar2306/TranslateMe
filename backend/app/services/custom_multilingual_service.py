@@ -68,19 +68,45 @@ class CustomMultilingualEngine:
             self.config = ckpt.get("config", {})
             n_enc = self.config.get("num_encoder_layers", self.config.get("num_layers", 6))
             n_dec = self.config.get("num_decoder_layers", self.config.get("num_layers", 6))
-            self.model = Seq2SeqTransformer(
-                src_vocab_size=self.config.get("src_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
-                tgt_vocab_size=self.config.get("tgt_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
-                d_model=self.config.get("d_model", 384),
-                n_heads=self.config.get("n_heads", 6),
-                num_encoder_layers=n_enc,
-                num_decoder_layers=n_dec,
-                d_ff=self.config.get("d_ff", 1536),
-                dropout=self.config.get("dropout", 0.1),
-                pad_idx=self.tokenizer.pad_id,
-                share_embeddings=self.config.get("share_embeddings", True),
-                pre_ln=self.config.get("pre_ln", False)
-            ).to(self.device)
+
+            is_modern = (
+                self.config.get("use_rope", False)
+                or any("rope" in k for k in ckpt.get("model_state_dict", {}).keys())
+                or self.config.get("model_type") == "modern"
+            )
+            if is_modern:
+                from ml_lab.custom_transformer.modern_transformer import ModernSeq2SeqTransformer, ModernTransformerConfig
+                modern_cfg = ModernTransformerConfig(
+                    vocab_size=self.config.get("vocab_size", self.tokenizer.vocab_size),
+                    d_model=self.config.get("d_model", 768),
+                    n_heads=self.config.get("n_heads", 12),
+                    num_encoder_layers=n_enc,
+                    num_decoder_layers=n_dec,
+                    d_ff=self.config.get("d_ff", 2048),
+                    dropout=self.config.get("dropout", 0.1),
+                    pad_idx=self.tokenizer.pad_id,
+                    bos_idx=self.tokenizer.bos_id,
+                    eos_idx=self.tokenizer.eos_id,
+                    use_rope=self.config.get("use_rope", True),
+                    use_qk_norm=self.config.get("use_qk_norm", True),
+                    share_embeddings=self.config.get("share_embeddings", True),
+                    soft_cap=self.config.get("soft_cap", 30.0)
+                )
+                self.model = ModernSeq2SeqTransformer(modern_cfg).to(self.device)
+            else:
+                self.model = Seq2SeqTransformer(
+                    src_vocab_size=self.config.get("src_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
+                    tgt_vocab_size=self.config.get("tgt_vocab_size", self.config.get("vocab_size", self.tokenizer.vocab_size)),
+                    d_model=self.config.get("d_model", 384),
+                    n_heads=self.config.get("n_heads", 6),
+                    num_encoder_layers=n_enc,
+                    num_decoder_layers=n_dec,
+                    d_ff=self.config.get("d_ff", 1536),
+                    dropout=self.config.get("dropout", 0.1),
+                    pad_idx=self.tokenizer.pad_id,
+                    share_embeddings=self.config.get("share_embeddings", True),
+                    pre_ln=self.config.get("pre_ln", False)
+                ).to(self.device)
 
             self.model.load_state_dict(ckpt["model_state_dict"])
             self.model.eval()

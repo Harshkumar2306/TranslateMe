@@ -56,4 +56,7 @@ def test_no_fallback_to_external_or_pretrained():
     assert custom_multilingual_engine.model is not None or not custom_multilingual_engine.is_loaded
     # Ensure engine attributes point to custom PyTorch Seq2SeqTransformer
     from ml_lab.custom_transformer import Seq2SeqTransformer
-    assert custom_multilingual_engine.model is None or isinstance(custom_multilingual_engine.model, Seq2SeqTransformer)
+    from ml_lab.custom_transformer.modern_transformer import ModernSeq2SeqTransformer
+    assert custom_multilingual_engine.model is None or isinstance(
+        custom_multilingual_engine.model, (Seq2SeqTransformer, ModernSeq2SeqTransformer)
+    )
