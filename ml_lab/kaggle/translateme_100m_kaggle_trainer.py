@@ -845,7 +845,7 @@ class Kaggle100MTrainer:
 # 6. MAIN EXECUTION PIPELINE
 # ==============================================================================
 
-def main():
+def main(args_list: Optional[List[str]] = None):
     parser = argparse.ArgumentParser(description="Train 100M Modern Transformer on Kaggle / Multi-GPU")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size per step (split across GPUs)")
@@ -854,7 +854,10 @@ def main():
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to resume from")
     parser.add_argument("--dataset_size", choices=["optimal", "medium", "smoke"], default="optimal",
                         help="optimal: 1.6M pairs (3.2M bidirectional), medium: 200k, smoke: 20k")
-    args = parser.parse_args()
+    if args_list is not None:
+        args, _ = parser.parse_known_args(args_list)
+    else:
+        args, _ = parser.parse_known_args()
 
     print("=" * 80)
     print("TRANSLATEME: 100M PARAMETER MODERN TRANSFORMER TRAINING RUN")
