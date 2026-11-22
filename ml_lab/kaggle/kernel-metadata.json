@@ -1,7 +1,7 @@
 {
   "id": "hrsh0o23/translateme-custom-transformer-training",
-  "title": "TranslateMe Custom Transformer Training",
-  "code_file": "translateme_kaggle_trainer.ipynb",
+  "title": "TranslateMe 100M Modern Transformer Training",
+  "code_file": "translateme_100m_kaggle_trainer.ipynb",
   "language": "python",
   "kernel_type": "notebook",
   "is_private": true,

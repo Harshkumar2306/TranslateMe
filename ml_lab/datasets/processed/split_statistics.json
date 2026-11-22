@@ -1,47 +1,42 @@
 {
-  "status": "VERIFIED_REAL_CORPUS",
-  "total_directional_train": 89358,
-  "total_directional_val": 4964,
-  "total_directional_test": 4968,
-  "total_dataset_pairs": 99290,
+  "status": "OPTIMAL_100M_VERIFIED",
+  "total_directional_train": 18000,
+  "total_directional_val": 1000,
+  "total_directional_test": 1000,
+  "total_dataset_pairs": 20000,
   "directions": {
     "en-hi": {
-      "train": 35808,
-      "val": 1989,
-      "test": 1990
+      "train": 4500,
+      "val": 250,
+      "test": 250
     },
     "hi-en": {
-      "train": 35808,
-      "val": 1989,
-      "test": 1990
+      "train": 4500,
+      "val": 250,
+      "test": 250
     },
     "en-ta": {
-      "train": 4879,
-      "val": 271,
-      "test": 272
+      "train": 2250,
+      "val": 125,
+      "test": 125
     },
     "ta-en": {
-      "train": 4879,
-      "val": 271,
-      "test": 272
+      "train": 2250,
+      "val": 125,
+      "test": 125
     },
     "en-te": {
-      "train": 3992,
-      "val": 222,
-      "test": 222
+      "train": 2250,
+      "val": 125,
+      "test": 125
     },
     "te-en": {
-      "train": 3992,
-      "val": 222,
-      "test": 222
+      "train": 2250,
+      "val": 125,
+      "test": 125
     }
   },
-  "normalization": "Unicode NFC",
-  "sources": [
-    "OPUS Tatoeba",
-    "OPUS GNOME",
-    "OPUS Ubuntu",
-    "TranslateMe Curated Benchmark"
-  ],
-  "leakage_audit": "Zero exact match overlap between train, val, and test splits"
+  "normalization": "Unicode NFC + Length Ratio (0.33 <= ratio <= 3.0)",
+  "source": "AI4Bharat Samanantar (IIT Madras) Parquet Shards",
+  "record_level_isolation": "100% strict - zero train/val/test overlap"
 }
