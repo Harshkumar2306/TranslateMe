@@ -163,3 +163,52 @@ def test_resumable_trainer_pause_and_resume(tmp_path):
     # Verify weights match
     for p1, p2 in zip(model.parameters(), model2.parameters()):
         assert torch.allclose(p1, p2)
+
+
+def test_bulletproof_trainer_eta_and_progress_file(tmp_path):
+    ckpt_dir = str(tmp_path / "checkpoints")
+    flag_file = str(tmp_path / "pause.flag")
+
+    config = ModernTransformerConfig(
+        vocab_size=100,
+        d_model=32,
+        n_heads=2,
+        num_encoder_layers=1,
+        num_decoder_layers=1,
+        d_ff=64
+    )
+    model = ModernSeq2SeqTransformer(config)
+    from ml_lab.training.resumable_trainer import configure_adamw_optimizer, BulletproofTrainer, format_duration
+    optimizer = configure_adamw_optimizer(model, lr=1e-3, weight_decay=0.01)
+
+    trainer = BulletproofTrainer(
+        model=model,
+        optimizer=optimizer,
+        checkpoint_dir=ckpt_dir,
+        pause_flag_file=flag_file,
+        save_every_steps=10,
+        use_amp=False,
+        device=torch.device("cpu")
+    )
+
+    loader = DataLoader(DummyDataset(size=8), batch_size=2)
+    # Train full epoch
+    res = trainer.train_epoch(loader, total_epochs=2, log_interval=1)
+    assert res["status"] == "completed"
+
+    # Check progress JSON was written
+    progress_file = os.path.join(ckpt_dir, "training_progress.json")
+    assert os.path.exists(progress_file)
+    import json
+    with open(progress_file, "r") as f:
+        data = json.load(f)
+    assert "epoch_remaining_str" in data
+    assert "total_eta_str" in data
+    assert "speed_tokens_per_sec" in data
+    assert data["epoch"] == 1
+    assert data["total_epochs"] == 2
+
+    # Test format duration
+    assert format_duration(65) == "1m 05s"
+    assert format_duration(3665) == "1h 01m 05s"
+
