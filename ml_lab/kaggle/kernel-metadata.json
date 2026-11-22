@@ -1,5 +1,5 @@
 {
-  "id": "hrsh0o23/translateme-custom-transformer-training",
+  "id": "hrsh0o23/translateme-100m-modern-transformer-training",
   "title": "TranslateMe 100M Modern Transformer Training",
   "code_file": "translateme_100m_kaggle_trainer.ipynb",
   "language": "python",
@@ -8,9 +8,7 @@
   "enable_gpu": true,
   "enable_tpu": false,
   "enable_internet": true,
-  "dataset_sources": [
-    "hrsh0o23/translateme-multilingual-corpus"
-  ],
+  "dataset_sources": [],
   "competition_sources": [],
   "kernel_sources": []
 }

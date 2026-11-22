@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """
-TranslateMe 100M Parameter Modern Transformer Training Pipeline
-Tailored for Kaggle Dual Nvidia Tesla T4 (2x16GB VRAM) / Single A100
+TranslateMe 100M Parameter Modern Transformer Multi-GPU Trainer
+Tailored for Kaggle Dual Nvidia Tesla T4 (2x16GB VRAM) / Single A100 / Dual GPU Cloud
 
-Key Specifications:
-- Total Parameters: 111,723,264 (~111.72M)
-- Model: ModernSeq2SeqTransformer (Encoder-Decoder)
-- Layers: 6 Encoder, 6 Decoder
-- Hidden Size: d_model = 768, n_heads = 12 (head_dim = 64)
-- FFN: SwiGLU Gated FFN (d_ff = 2048)
-- Positional: Rotary Position Embeddings (RoPE) with dynamic context extrapolation
-- Normalization: RMSNorm (pre-LN) with mixed precision stability
-- Attention: Scaled Dot-Product Attention with QK-Normalization
-- Vocabulary: 16,384 Subwords (trained strictly on train split)
-- Dataset: AI4Bharat Samanantar (1.6M clean pairs -> 3.2M bidirectional samples)
-- Hardware: Multi-GPU PyTorch AMP FP16 with Resumable Bulletproof Trainer
+100% Self-Contained:
+- Architecture: 111,723,264 Parameter Modern Transformer (Vaswani + RoPE + SwiGLU + RMSNorm + QK-Norm + Soft-Cap)
+- Tokenizer: 16,384 Vocab Multilingual Byte-Level BPE trained strictly on train partition
+- Dataset Ingestion: AI4Bharat Samanantar (1.6M clean pairs -> 3.2M bidirectional samples)
+- Hardware: Automatic Dual GPU (DataParallel) + PyTorch AMP FP16 + Real-Time ETA & Progress
 """
 
 import os
@@ -31,7 +24,7 @@ import ssl
 import io
 import argparse
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Any, Optional, Iterable
 
 import torch
 import torch.nn as nn
@@ -47,12 +40,263 @@ except ImportError:
     pq = None
     SSL_CTX = ssl.create_default_context()
 
+try:
+    from tokenizers import Tokenizer, decoders, pre_tokenizers, normalizers
+    from tokenizers.models import BPE
+    from tokenizers.trainers import BpeTrainer
+except ImportError:
+    Tokenizer = None
+
 # ==============================================================================
-# 1. 100% CUSTOM MODERN TRANSFORMER ARCHITECTURE (111.72M PARAMETERS)
+# 1. 100% FROM-SCRATCH MULTILINGUAL SUBWORD TOKENIZER (16,384 VOCAB)
+# ==============================================================================
+
+SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>", "<2en>", "<2hi>", "<2ta>", "<2te>"]
+
+def get_control_token(lang: str) -> str:
+    return f"<2{lang.strip().lower()}>"
+
+
+class MultilingualSubwordTokenizer:
+    """
+    Multilingual subword tokenizer wrapper using Byte-Pair Encoding (BPE).
+    Trains vocabulary from scratch on multilingual text without pretrained weights.
+    """
+    PAD_TOKEN = "<pad>"
+    SOS_TOKEN = "<bos>"
+    BOS_TOKEN = "<bos>"
+    EOS_TOKEN = "<eos>"
+    UNK_TOKEN = "<unk>"
+
+    def __init__(self, tokenizer_file: Optional[str] = None):
+        if tokenizer_file and os.path.exists(tokenizer_file):
+            self.tokenizer = Tokenizer.from_file(tokenizer_file)
+            self.tokenizer.decoder = decoders.ByteLevel()
+        else:
+            self.tokenizer = Tokenizer(BPE(unk_token=self.UNK_TOKEN))
+            self.tokenizer.normalizer = normalizers.NFC()
+            self.tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+            self.tokenizer.decoder = decoders.ByteLevel()
+
+        self._cache_special_token_ids()
+
+    def _cache_special_token_ids(self):
+        try:
+            self.pad_id = self.tokenizer.token_to_id("<pad>") if self.tokenizer.token_to_id("<pad>") is not None else 0
+            self.unk_id = self.tokenizer.token_to_id("<unk>") if self.tokenizer.token_to_id("<unk>") is not None else 1
+            bos_cand = self.tokenizer.token_to_id("<bos>")
+            self.sos_id = bos_cand if bos_cand is not None else (self.tokenizer.token_to_id("<sos>") or 2)
+            self.bos_id = self.sos_id
+            self.eos_id = self.tokenizer.token_to_id("<eos>") if self.tokenizer.token_to_id("<eos>") is not None else 3
+        except Exception:
+            self.pad_id = 0
+            self.unk_id = 1
+            self.sos_id = 2
+            self.bos_id = 2
+            self.eos_id = 3
+
+    @property
+    def vocab_size(self) -> int:
+        return self.tokenizer.get_vocab_size()
+
+    def get_control_token_id(self, target_lang: str) -> int:
+        token_str = get_control_token(target_lang)
+        tid = self.tokenizer.token_to_id(token_str)
+        if tid is None:
+            raise ValueError(f"Control token '{token_str}' not in vocabulary.")
+        return tid
+
+    def train_from_iterator(self, iterator: Iterable[str], vocab_size: int = 16384, min_frequency: int = 2):
+        trainer = BpeTrainer(
+            vocab_size=vocab_size,
+            special_tokens=SPECIAL_TOKENS,
+            min_frequency=min_frequency,
+            initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+            show_progress=True
+        )
+        self.tokenizer.train_from_iterator(iterator, trainer=trainer)
+        self._cache_special_token_ids()
+
+    def encode(self, text: str, add_special_tokens: bool = True, target_lang: Optional[str] = None) -> List[int]:
+        enc = self.tokenizer.encode(text.strip())
+        tokens = enc.ids
+        if add_special_tokens:
+            prefix = [self.bos_id]
+            if target_lang is not None:
+                prefix.append(self.get_control_token_id(target_lang))
+            tokens = prefix + tokens + [self.eos_id]
+        return tokens
+
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> str:
+        if skip_special_tokens:
+            filtered = [
+                i for i in token_ids
+                if i not in (self.pad_id, self.bos_id, self.eos_id, self.unk_id)
+                and not (self.tokenizer.id_to_token(i) or "").startswith("<2")
+            ]
+            return self.tokenizer.decode(filtered)
+        return self.tokenizer.decode(token_ids)
+
+    def save(self, filepath: str):
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        self.tokenizer.save(filepath)
+
+    @classmethod
+    def load(cls, filepath: str) -> "MultilingualSubwordTokenizer":
+        return cls(tokenizer_file=filepath)
+
+
+# ==============================================================================
+# 2. DATASET INGESTION: AI4BHARAT SAMANANTAR PARQUET STREAMER
+# ==============================================================================
+
+SAMANANTAR_SHARDS = {
+    "hi": ["https://huggingface.co/datasets/ai4bharat/samanantar/resolve/main/hi/train-00000-of-00008.parquet"],
+    "ta": ["https://huggingface.co/datasets/ai4bharat/samanantar/resolve/main/ta/train-00000-of-00004.parquet"],
+    "te": ["https://huggingface.co/datasets/ai4bharat/samanantar/resolve/main/te/train-00000-of-00003.parquet"]
+}
+
+def clean_text(text: str) -> str:
+    if not isinstance(text, str):
+        return ""
+    text = unicodedata.normalize("NFC", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = text.replace("\u00a0", " ").replace("\u200b", "").replace("\ufeff", "")
+    text = re.sub(r"[\r\t\f\v]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def is_valid_pair(src: str, tgt: str) -> bool:
+    if not src or not tgt:
+        return False
+    if len(src) < 4 or len(tgt) < 4:
+        return False
+    if len(src) > 300 or len(tgt) > 300:
+        return False
+    s_words = src.split()
+    t_words = tgt.split()
+    if len(s_words) < 2 or len(t_words) < 2:
+        return False
+    if len(s_words) > 100 or len(t_words) > 100:
+        return False
+    ratio = len(s_words) / max(len(t_words), 1)
+    if ratio > 3.0 or ratio < 0.33:
+        return False
+    if src.strip().lower() == tgt.strip().lower():
+        return False
+    return True
+
+
+def fetch_samanantar_shard(url: str, max_pairs: int, cache_dir: Path) -> List[Tuple[str, str]]:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    filename = url.split("/")[-2] + "_" + url.split("/")[-1]
+    local_path = cache_dir / filename
+
+    if local_path.exists() and local_path.stat().st_size > 10 * 1024 * 1024:
+        print(f"  Found cached shard: {local_path.name} ({local_path.stat().st_size / (1024*1024):.1f} MB)")
+        table = pq.read_table(local_path)
+    else:
+        print(f"  Downloading parquet shard: {url.split('/')[-1]}...")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, context=SSL_CTX, timeout=180) as resp:
+            content = resp.read()
+        print(f"  Downloaded {len(content) / (1024*1024):.1f} MB. Caching to {local_path.name}...")
+        with open(local_path, "wb") as f:
+            f.write(content)
+        table = pq.read_table(local_path)
+
+    src_col = table["src"].to_pylist()
+    tgt_col = table["tgt"].to_pylist()
+    pairs = []
+    seen = set()
+
+    for s_raw, t_raw in zip(src_col, tgt_col):
+        s = clean_text(s_raw)
+        t = clean_text(t_raw)
+        if is_valid_pair(s, t):
+            h = hashlib.sha256(f"{s.lower()}|||{t.lower()}".encode("utf-8")).hexdigest()
+            if h not in seen:
+                seen.add(h)
+                pairs.append((s, t))
+                if len(pairs) >= max_pairs:
+                    break
+
+    print(f"  Extracted {len(pairs):,} clean pairs.")
+    return pairs
+
+
+def build_optimal_dataset(
+    target_hi: int = 800000,
+    target_ta: int = 400000,
+    target_te: int = 400000,
+    output_dir: str = "ml_lab/datasets/processed",
+    cache_dir: str = "ml_lab/datasets/real_corpus",
+    seed: int = 42
+):
+    random.seed(seed)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    c_path = Path(cache_dir)
+
+    targets = {"hi": target_hi, "ta": target_ta, "te": target_te}
+    all_pairs: Dict[str, List[Tuple[str, str]]] = {}
+
+    print("=" * 70)
+    print("INGESTING PARALLEL CORPUS (AI4BHARAT SAMANANTAR)")
+    print(f"Targets: HI={target_hi:,} | TA={target_ta:,} | TE={target_te:,}")
+    print("=" * 70)
+
+    for lang, count in targets.items():
+        print(f"\nProcessing English <-> {lang.upper()} ({count:,} pairs)...")
+        collected = []
+        for url in SAMANANTAR_SHARDS[lang]:
+            needed = count - len(collected)
+            if needed <= 0:
+                break
+            pairs = fetch_samanantar_shard(url, needed, c_path)
+            collected.extend(pairs)
+        all_pairs[lang] = collected
+
+    train_data = []
+    val_data = []
+    test_data = []
+
+    for lang, pairs in all_pairs.items():
+        random.shuffle(pairs)
+        n = len(pairs)
+        n_train = int(0.90 * n)
+        n_val = int(0.05 * n)
+
+        train_s = pairs[:n_train]
+        val_s = pairs[n_train:n_train + n_val]
+        test_s = pairs[n_train + n_val:]
+
+        for s, d_set in [(train_s, train_data), (val_s, val_data), (test_s, test_data)]:
+            for en, indic in s:
+                d_set.append({"source": en, "target": indic, "target_lang": lang, "source_lang": "en"})
+                d_set.append({"source": indic, "target": en, "target_lang": "en", "source_lang": lang})
+
+    random.shuffle(train_data)
+    random.shuffle(val_data)
+    random.shuffle(test_data)
+
+    print(f"\nPartitioning Finished (Record Isolation):")
+    print(f"  Train: {len(train_data):,} samples | Val: {len(val_data):,} samples | Test: {len(test_data):,} samples")
+
+    for name, data in [("train.jsonl", train_data), ("val.jsonl", val_data), ("test.jsonl", test_data)]:
+        p = out_path / name
+        with open(p, "w", encoding="utf-8") as f:
+            for item in data:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        print(f"  Saved {name} ({p.stat().st_size / (1024*1024):.1f} MB)")
+
+
+# ==============================================================================
+# 3. 100% CUSTOM MODERN TRANSFORMER ARCHITECTURE (111.72M PARAMETERS)
 # ==============================================================================
 
 class RMSNorm(nn.Module):
-    """Root Mean Square Layer Normalization with explicit FP16 cast protection."""
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
@@ -68,7 +312,6 @@ class RMSNorm(nn.Module):
 
 
 class RotaryEmbedding(nn.Module):
-    """Rotary Position Embedding (RoPE) with dynamic context extrapolation."""
     def __init__(self, dim: int, max_seq_len: int = 2048, base: float = 10000.0):
         super().__init__()
         self.dim = dim
@@ -106,7 +349,6 @@ def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.T
 
 
 class SwiGLU(nn.Module):
-    """SwiGLU Gated Feed-Forward Network: (x W_gate * sigmoid(x W_gate)) * (x W_up) W_down."""
     def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
         super().__init__()
         self.w_gate = nn.Linear(d_model, d_ff, bias=False)
@@ -119,7 +361,6 @@ class SwiGLU(nn.Module):
 
 
 class ModernAttention(nn.Module):
-    """Multi-Head Attention with QK-Norm, RoPE support, and PyTorch SDPA."""
     def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1, is_causal: bool = False, use_rope: bool = True):
         super().__init__()
         assert d_model % n_heads == 0
@@ -160,7 +401,6 @@ class ModernAttention(nn.Module):
             q = apply_rope(q.transpose(1, 2), cos, sin).transpose(1, 2)
             k = apply_rope(k.transpose(1, 2), cos, sin).transpose(1, 2)
 
-        # PyTorch SDPA uses FlashAttention / Memory-Efficient Attention on Nvidia CUDA
         out = F.scaled_dot_product_attention(
             q, k, v,
             attn_mask=attn_mask,
@@ -214,7 +454,7 @@ class Modern100MTransformer(nn.Module):
     """
     111.72M Parameter Modern Transformer.
     6 Encoder layers, 6 Decoder layers, d_model=768, n_heads=12, d_ff=2048 (SwiGLU).
-    Shared embeddings tied with output projection for multilingual cross-lingual alignment.
+    Shared tied embeddings for cross-lingual multilingual alignment.
     """
     def __init__(
         self,
@@ -237,14 +477,11 @@ class Modern100MTransformer(nn.Module):
         self.eos_idx = eos_idx
         self.soft_cap = soft_cap
 
-        # Shared Token Embedding
         self.shared_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
         self.emb_scale = math.sqrt(d_model)
 
-        # RoPE
         self.rope = RotaryEmbedding(dim=d_model // n_heads, max_seq_len=2048)
 
-        # Encoder & Decoder Stacks
         self.encoder_layers = nn.ModuleList([
             ModernEncoderLayer(d_model, n_heads, d_ff, dropout) for _ in range(num_layers)
         ])
@@ -255,7 +492,6 @@ class Modern100MTransformer(nn.Module):
         ])
         self.decoder_norm = RMSNorm(d_model)
 
-        # Output projection tied to shared embedding
         self.output_proj = nn.Linear(d_model, vocab_size, bias=False)
         self.output_proj.weight = self.shared_emb.weight
 
@@ -270,11 +506,9 @@ class Modern100MTransformer(nn.Module):
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
     def make_padding_mask(self, x: torch.Tensor) -> torch.Tensor:
-        """(B, S) -> (B, 1, 1, S) boolean mask where True = keep, False = mask."""
         return (x != self.pad_idx).unsqueeze(1).unsqueeze(2)
 
     def make_causal_mask(self, S: int, device: torch.device) -> torch.Tensor:
-        """(1, 1, S, S) boolean causal mask."""
         return torch.tril(torch.ones(S, S, device=device, dtype=torch.bool)).unsqueeze(0).unsqueeze(0)
 
     def encode(self, src: torch.Tensor) -> torch.Tensor:
@@ -282,7 +516,6 @@ class Modern100MTransformer(nn.Module):
         rope_emb = self.rope(src, seq_len=S)
         mask = self.make_padding_mask(src)
         x = self.shared_emb(src) * self.emb_scale
-
         for layer in self.encoder_layers:
             x = layer(x, rope_emb=rope_emb, mask=mask)
         return self.encoder_norm(x)
@@ -304,62 +537,14 @@ class Modern100MTransformer(nn.Module):
 
         x = self.decoder_norm(x)
         logits = self.output_proj(x)
-
         if self.soft_cap > 0:
             logits = torch.tanh(logits / self.soft_cap) * self.soft_cap
 
         return logits.contiguous()
 
-    @torch.no_grad()
-    def generate(
-        self,
-        src: torch.Tensor,
-        max_len: int = 80,
-        prefix_tokens: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """Greedy autoregressive decoding with finished sequence clamping."""
-        self.eval()
-        B = src.shape[0]
-        device = src.device
-
-        memory = self.encode(src)
-        src_mask = self.make_padding_mask(src)
-
-        if prefix_tokens is not None:
-            generated = prefix_tokens.clone().to(device)
-        else:
-            generated = torch.full((B, 1), self.bos_idx, dtype=torch.long, device=device)
-
-        finished = torch.zeros(B, dtype=torch.bool, device=device)
-
-        for _ in range(max_len):
-            S_gen = generated.shape[1]
-            rope_emb = self.rope(generated, seq_len=S_gen)
-            causal_mask = self.make_causal_mask(S_gen, device)
-
-            x = self.shared_emb(generated) * self.emb_scale
-            for layer in self.decoder_layers:
-                x = layer(x, memory=memory, rope_emb=rope_emb, causal_mask=causal_mask, memory_mask=src_mask)
-
-            x = self.decoder_norm(x)
-            logits = self.output_proj(x[:, -1:, :])
-            if self.soft_cap > 0:
-                logits = torch.tanh(logits / self.soft_cap) * self.soft_cap
-
-            next_token = logits.squeeze(1).argmax(dim=-1)
-            # Clamp finished sequences to pad_idx
-            next_token = torch.where(finished, torch.full_like(next_token, self.pad_idx), next_token)
-            generated = torch.cat([generated, next_token.unsqueeze(1)], dim=1)
-
-            finished = finished | (next_token == self.eos_idx)
-            if finished.all():
-                break
-
-        return generated
-
 
 # ==============================================================================
-# 2. NOAM LEARNING RATE SCHEDULER
+# 4. NOAM SCHEDULER & PYTORCH DATALOADERS
 # ==============================================================================
 
 class NoamScheduler:
@@ -385,17 +570,9 @@ class NoamScheduler:
 
     def load_state_dict(self, state):
         self.step_num = state["step_num"]
-        self.d_model = state.get("d_model", 768)
-        self.warmup_steps = state.get("warmup_steps", 4000)
-        self.factor = state.get("factor", 1.0)
 
-
-# ==============================================================================
-# 3. STREAMING DATASET AND PYTORCH DATALOADER
-# ==============================================================================
 
 class JsonlNMTDataset(Dataset):
-    """Memory-mapped or in-memory JSONL dataset for fast PyTorch training."""
     def __init__(self, file_path: str, max_samples: Optional[int] = None):
         self.samples = []
         with open(file_path, "r", encoding="utf-8") as f:
@@ -412,7 +589,7 @@ class JsonlNMTDataset(Dataset):
         return self.samples[idx]
 
 
-def build_nmt_collate_fn(tokenizer, max_len: int = 128):
+def build_nmt_collate_fn(tokenizer: MultilingualSubwordTokenizer, max_len: int = 128):
     def collate_fn(batch):
         src_batch = []
         tgt_in_batch = []
@@ -427,7 +604,6 @@ def build_nmt_collate_fn(tokenizer, max_len: int = 128):
             if len(tgt_tokens) > max_len:
                 tgt_tokens = tgt_tokens[:max_len - 1] + [tokenizer.eos_id]
 
-            # Teacher forcing: tgt_in = <bos> ... w_{T-1}, tgt_out = ... w_T
             src_batch.append(torch.tensor(src_tokens, dtype=torch.long))
             tgt_in_batch.append(torch.tensor(tgt_tokens[:-1], dtype=torch.long))
             tgt_out_batch.append(torch.tensor(tgt_tokens[1:], dtype=torch.long))
@@ -437,16 +613,12 @@ def build_nmt_collate_fn(tokenizer, max_len: int = 128):
         tgt_in_padded = nn.utils.rnn.pad_sequence(tgt_in_batch, batch_first=True, padding_value=pad_id)
         tgt_out_padded = nn.utils.rnn.pad_sequence(tgt_out_batch, batch_first=True, padding_value=pad_id)
 
-        return {
-            "src": src_padded,
-            "tgt_in": tgt_in_padded,
-            "tgt_out": tgt_out_padded
-        }
+        return {"src": src_padded, "tgt_in": tgt_in_padded, "tgt_out": tgt_out_padded}
     return collate_fn
 
 
 # ==============================================================================
-# 4. RESUMABLE BULLETPROOF MULTI-GPU TRAINER WITH REAL-TIME ETA
+# 5. MULTI-GPU RESUMABLE TRAINER WITH REAL-TIME ETA
 # ==============================================================================
 
 def format_duration(seconds: float) -> str:
@@ -464,7 +636,7 @@ def format_duration(seconds: float) -> str:
 class Kaggle100MTrainer:
     def __init__(
         self,
-        model: nn.Module,
+        model: Modern100MTransformer,
         optimizer: torch.optim.Optimizer,
         scheduler: Any,
         checkpoint_dir: str = "ml_lab/checkpoints",
@@ -483,7 +655,7 @@ class Kaggle100MTrainer:
         self.use_amp = use_amp and (self.device.type == "cuda")
         self.save_every_steps = save_every_steps
 
-        # Multi-GPU support (e.g. 2x Tesla T4 on Kaggle)
+        # Multi-GPU DataParallel (e.g. 2x Tesla T4 on Kaggle)
         self.is_multi_gpu = torch.cuda.device_count() > 1
         if self.is_multi_gpu:
             print(f"[*] Detected {torch.cuda.device_count()} CUDA GPUs! Enabling torch.nn.DataParallel.")
@@ -513,8 +685,19 @@ class Kaggle100MTrainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
             "scaler_state_dict": self.scaler.state_dict() if self.use_amp else None,
-            "train_loss_history": self.train_loss_history,
-            "val_loss_history": self.val_loss_history,
+            "config": {
+                "vocab_size": raw_model.vocab_size,
+                "d_model": raw_model.d_model,
+                "n_heads": 12,
+                "num_encoder_layers": 6,
+                "num_decoder_layers": 6,
+                "d_ff": 2048,
+                "use_rope": True,
+                "use_qk_norm": True,
+                "share_embeddings": True,
+                "soft_cap": 30.0,
+                "model_type": "modern"
+            },
             "timestamp": time.time()
         }
         torch.save(state, tmp_path)
@@ -589,7 +772,6 @@ class Kaggle100MTrainer:
                 if self.global_step % self.save_every_steps == 0:
                     self.save_atomic_checkpoint("checkpoint_latest.pt")
 
-            # Progress & Real-time ETA Calculation
             if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == num_batches:
                 elapsed = time.time() - epoch_start
                 batches_done = batch_idx + 1
@@ -619,7 +801,6 @@ class Kaggle100MTrainer:
                 self.train_loss_history.append(avg_loss)
                 running_loss = 0.0
 
-        # Epoch-end validation
         if val_loader:
             val_loss = self.evaluate(val_loader)
             self.val_loss_history.append(val_loss)
@@ -628,7 +809,7 @@ class Kaggle100MTrainer:
                 self.best_val_loss = val_loss
             self.save_atomic_checkpoint("checkpoint_latest.pt", is_best=is_best)
             self.save_atomic_checkpoint(f"checkpoint_epoch_{self.epoch+1}.pt")
-            print(f"=== Epoch {self.epoch+1} Finished | Val Loss: {val_loss:.4f} | Best Val: {self.best_val_loss:.4f} ===")
+            print(f"=== Epoch {self.epoch+1} Complete | Val Loss: {val_loss:.4f} | Best Val: {self.best_val_loss:.4f} ===")
         else:
             self.save_atomic_checkpoint("checkpoint_latest.pt")
 
@@ -661,7 +842,7 @@ class Kaggle100MTrainer:
 
 
 # ==============================================================================
-# 5. MAIN ENTRY POINT: PREPARATION & TRAINING EXECUTION
+# 6. MAIN EXECUTION PIPELINE
 # ==============================================================================
 
 def main():
@@ -688,8 +869,7 @@ def main():
     test_file = "ml_lab/datasets/processed/test.jsonl"
 
     if not os.path.exists(train_file):
-        print("\n[Phase 1] Processed dataset not found locally. Running build_100m_dataset.py...")
-        from ml_lab.datasets.build_100m_dataset import build_optimal_dataset
+        print("\n[Phase 1] Processed dataset not found locally. Running Samanantar ingestion...")
         if args.dataset_size == "optimal":
             build_optimal_dataset(target_hi=800000, target_ta=400000, target_te=400000)
         elif args.dataset_size == "medium":
@@ -698,19 +878,18 @@ def main():
             build_optimal_dataset(target_hi=5000, target_ta=2500, target_te=2500)
 
     # 2. Tokenizer (Trained strictly on train split)
-    from ml_lab.tokenizer import MultilingualSubwordTokenizer
     tokenizer_path = "ml_lab/tokenizer/multilingual_tokenizer.json"
     tokenizer = MultilingualSubwordTokenizer()
 
     if os.path.exists(tokenizer_path):
         print(f"\n[Phase 2] Loading existing subword tokenizer from {tokenizer_path}...")
-        tokenizer.load(tokenizer_path)
+        tokenizer = MultilingualSubwordTokenizer.load(tokenizer_path)
     else:
         print(f"\n[Phase 2] Training subword BPE tokenizer (16,384 vocab) strictly on train split...")
         texts = []
         with open(train_file, "r", encoding="utf-8") as f:
             for idx, line in enumerate(f):
-                if idx > 200000:
+                if idx > 250000:
                     break
                 d = json.loads(line)
                 texts.append(d["source"])
@@ -784,7 +963,7 @@ def main():
         trainer.train_epoch(train_loader, val_loader, total_epochs=args.epochs, log_interval=50)
 
     print("\n[Phase 6] Training Complete! Best Val Loss: {:.4f}".format(trainer.best_val_loss))
-    # Export for Kaggle working directory
+
     if os.path.exists("/kaggle/working"):
         import shutil
         best_pt = "ml_lab/checkpoints/checkpoint_best.pt"
