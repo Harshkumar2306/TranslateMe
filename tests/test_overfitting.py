@@ -193,3 +193,64 @@ def test_greedy_decoding_finished_sequence_clamping():
     # Sentence 0 must terminate cleanly at eos_idx without extraneous tokens
     assert gen[0] == [bos_idx, 20, eos_idx], f"Sequence A did not clamp properly: {gen[0]}"
     assert gen[1] == [bos_idx, 21, 22, 23, 24, eos_idx], f"Sequence B failed: {gen[1]}"
+
+
+def test_batch_decoding_three_way_eos_edge_cases():
+    """
+    Review Section 2 edge-case regression test:
+    Validates batch decoding with 3 simultaneous scenarios:
+    1. Batch item 1 emits EOS immediately (step 1).
+    2. Batch item 2 emits EOS after five steps.
+    3. Batch item 3 never emits EOS before max_len limit.
+    Guarantees no token bleeding, no padding interpreted as EOS, and clean boundary handling.
+    """
+    torch.manual_seed(42)
+    vocab_size = 32
+    pad_idx = 0
+    bos_idx = 2
+    eos_idx = 3
+
+    config = ModernTransformerConfig(
+        vocab_size=vocab_size,
+        d_model=64,
+        n_heads=2,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        d_ff=128,
+        dropout=0.0,
+        pad_idx=pad_idx,
+        bos_idx=bos_idx,
+        eos_idx=eos_idx
+    )
+    model = ModernSeq2SeqTransformer(config)
+
+    src_data = torch.tensor([
+        [4, eos_idx, pad_idx, pad_idx],
+        [5, 6, 7, eos_idx],
+        [8, 9, 10, eos_idx]
+    ])
+
+    tgt_data = torch.tensor([
+        [bos_idx, eos_idx, pad_idx, pad_idx, pad_idx, pad_idx],
+        [bos_idx, 21, 22, 23, 24, eos_idx],
+        [bos_idx, 25, 26, 27, 28, 29]
+    ])
+
+    tgt_in = tgt_data[:, :-1]
+    tgt_out = tgt_data[:, 1:]
+
+    criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.015)
+
+    for _ in range(50):
+        optimizer.zero_grad()
+        logits = model(src_data, tgt_in)
+        loss = criterion(logits.reshape(-1, vocab_size), tgt_out.reshape(-1))
+        loss.backward()
+        optimizer.step()
+
+    gen = model.generate(src_data, max_len=5, num_beams=1)
+    assert gen[0] == [bos_idx, eos_idx], f"Item 1 failed immediate EOS: {gen[0]}"
+    assert gen[1] == [bos_idx, 21, 22, 23, 24, eos_idx], f"Item 2 failed mid-step EOS: {gen[1]}"
+    assert gen[2] == [bos_idx, 25, 26, 27, 28, 29], f"Item 3 failed max-len termination without EOS: {gen[2]}"
+

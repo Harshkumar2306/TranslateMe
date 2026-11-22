@@ -29,7 +29,9 @@ from ml_lab.custom_transformer import (
 from ml_lab.tokenizer import MultilingualSubwordTokenizer
 from ml_lab.datasets import (
     generate_multilingual_training_set,
-    get_all_monolingual_sentences,
+    get_training_pairs,
+    get_validation_pairs,
+    get_held_out_test_pairs,
     split_parallel_dataset,
     clean_and_prepare_parallel_data
 )
@@ -133,26 +135,38 @@ def train_multilingual_model(
     print(f"Device: {device} | Architecture: {num_layers}L-{n_heads}H-{d_model}D-{d_ff}FF")
     print(f"========================================================")
 
-    # 1. Prepare and Train Multilingual Tokenizer
+    # 1. Prepare Multilingual Parallel Dataset (Strict Record-Level Partitioning)
+    processed_train = "ml_lab/datasets/processed/train.jsonl"
+    processed_val = "ml_lab/datasets/processed/val.jsonl"
+
+    if os.path.exists(processed_train) and os.path.exists(processed_val):
+        print(f"\n[Phase 1] Loading parallel dataset from verified processed splits...")
+        train_samples = []
+        with open(processed_train, "r", encoding="utf-8") as f:
+            for line in f:
+                d = json.loads(line)
+                train_samples.append((d["source"], d["target"], d["target_lang"]))
+        
+        val_samples = []
+        with open(processed_val, "r", encoding="utf-8") as f:
+            for line in f:
+                d = json.loads(line)
+                val_samples.append((d["source"], d["target"], d["target_lang"]))
+    else:
+        print(f"\n[Phase 1] Using record-partitioned curated benchmark dataset...")
+        train_samples = get_training_pairs()
+        val_samples = get_validation_pairs()
+
+    print(f"Dataset Split (Record-Level Partitioned) -> Train: {len(train_samples):,} pairs | Validation: {len(val_samples):,} pairs")
+
+    # 2. Train Tokenizer STRICTLY on Training Split (Guarantees ZERO Tokenizer Leakage)
     tokenizer_path = "ml_lab/tokenizer/multilingual_tokenizer.json"
     tokenizer = MultilingualSubwordTokenizer()
-    monolingual_sentences = get_all_monolingual_sentences()
-
-    print(f"\n[Phase 1] Training Subword BPE Tokenizer on {len(monolingual_sentences)} multilingual sentences...")
-    tokenizer.train_from_iterator(monolingual_sentences, vocab_size=2000, min_frequency=1)
+    train_texts = list(set([s[0] for s in train_samples] + [s[1] for s in train_samples]))
+    print(f"\n[Phase 2] Training Subword BPE Tokenizer on {len(train_texts):,} unique training sentences (Zero test/val leakage)...")
+    tokenizer.train_from_iterator(train_texts, vocab_size=min(8192, max(500, len(train_texts) * 2)), min_frequency=1)
     tokenizer.save(tokenizer_path)
     print(f"Subword Tokenizer saved to: {tokenizer_path} (Vocab size: {tokenizer.vocab_size})")
-
-    # 2. Prepare Multilingual Parallel Dataset
-    all_samples = generate_multilingual_training_set()
-    print(f"\n[Phase 2] Curated {len(all_samples)} parallel pairs across en, hi, ta, te")
-
-    # Split: 80% train, 20% validation
-    random.Random(seed).shuffle(all_samples)
-    split_idx = int(len(all_samples) * 0.8)
-    train_samples = all_samples[:split_idx]
-    val_samples = all_samples[split_idx:]
-    print(f"Dataset Split -> Train: {len(train_samples)} | Validation: {len(val_samples)}")
 
     train_ds = MultilingualNMTDataset(train_samples, tokenizer, max_seq_len=64)
     val_ds = MultilingualNMTDataset(val_samples, tokenizer, max_seq_len=64)

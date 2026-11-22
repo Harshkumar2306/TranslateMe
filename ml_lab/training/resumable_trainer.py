@@ -124,10 +124,15 @@ class BulletproofTrainer:
         # PyTorch AMP FP16 Scaler (modern syntax torch.amp.GradScaler)
         self.scaler = GradScaler("cuda", enabled=self.use_amp)
 
-        # Loss function with label smoothing
+        # Loss functions (mean and sum for exact token weighting)
         self.criterion = nn.CrossEntropyLoss(
             ignore_index=model.pad_idx,
             label_smoothing=label_smoothing
+        )
+        self.sum_criterion = nn.CrossEntropyLoss(
+            ignore_index=model.pad_idx,
+            label_smoothing=label_smoothing,
+            reduction="sum"
         )
 
         # State tracking
@@ -311,21 +316,23 @@ class BulletproofTrainer:
             tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
             tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
 
-            # Exact accumulation chunk size (prevents underweighting incomplete final group)
+            batch_tokens = (tgt_out != self.model.pad_idx).sum().item()
+            total_tokens += batch_tokens
+
+            # Dynamic accumulation chunk size (prevents underweighting incomplete final group)
             chunk_start = (batch_idx // self.gradient_accumulation_steps) * self.gradient_accumulation_steps
             actual_chunk_size = min(self.gradient_accumulation_steps, num_batches - chunk_start)
 
-            # 2. Forward pass with mixed precision AMP
+            # 2. Forward pass with mixed precision AMP and exact token-weighted loss
             with autocast("cuda", enabled=self.use_amp):
                 logits = self.model(src, tgt_in)
-                raw_loss = self.criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+                batch_sum_loss = self.sum_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+                raw_loss = batch_sum_loss / max(batch_tokens, 1)
                 loss = raw_loss / actual_chunk_size
 
             # 3. Backward pass
             self.scaler.scale(loss).backward()
 
-            batch_tokens = (tgt_out != self.model.pad_idx).sum().item()
-            total_tokens += batch_tokens
             running_loss += raw_loss.item()
             epoch_loss += raw_loss.item()
 

@@ -52,8 +52,7 @@ ml_lab/kaggle/dataset/*.gz
 *.tsv
 *.parquet
 *.jsonl
-*.gz
-*.jsonl
+!ml_lab/datasets/processed/*.jsonl
 
 # Database
 *.db

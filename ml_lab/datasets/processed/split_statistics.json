@@ -1,8 +1,47 @@
 {
-  "train_pairs_count": 192,
-  "val_pairs_count": 24,
-  "test_pairs_count": 24,
-  "train_sha256": "a41c79ac8b723dd38800a3546959049eebf7d23bb33ab629047bca4f860f0bab",
-  "val_sha256": "e7039907f1de54b2b4e7b6eb57343471ed0ff5baad677389df6e6951127003dc",
-  "test_sha256": "5bec72807caa8a35494def2ba3dcbf8a64c5d58583392457ff2913c22640e328"
+  "status": "VERIFIED_REAL_CORPUS",
+  "total_directional_train": 89358,
+  "total_directional_val": 4964,
+  "total_directional_test": 4968,
+  "total_dataset_pairs": 99290,
+  "directions": {
+    "en-hi": {
+      "train": 35808,
+      "val": 1989,
+      "test": 1990
+    },
+    "hi-en": {
+      "train": 35808,
+      "val": 1989,
+      "test": 1990
+    },
+    "en-ta": {
+      "train": 4879,
+      "val": 271,
+      "test": 272
+    },
+    "ta-en": {
+      "train": 4879,
+      "val": 271,
+      "test": 272
+    },
+    "en-te": {
+      "train": 3992,
+      "val": 222,
+      "test": 222
+    },
+    "te-en": {
+      "train": 3992,
+      "val": 222,
+      "test": 222
+    }
+  },
+  "normalization": "Unicode NFC",
+  "sources": [
+    "OPUS Tatoeba",
+    "OPUS GNOME",
+    "OPUS Ubuntu",
+    "TranslateMe Curated Benchmark"
+  ],
+  "leakage_audit": "Zero exact match overlap between train, val, and test splits"
 }

@@ -5,7 +5,7 @@
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 40 Passed](https://img.shields.io/badge/Tests-40%20Passed-brightgreen.svg)](tests/)
+[![Tests: 41 Passed](https://img.shields.io/badge/Tests-41%20Passed-brightgreen.svg)](tests/)
 
 > **A 100% Genuine From-Scratch Multilingual Neural Machine Translation System.**  
 > Built as an advanced Deep Learning research system featuring an independently implemented PyTorch Sequence-to-Sequence Transformer initialized randomly and trained through our own training pipeline across English, Hindi, Tamil, and Telugu. Zero pretrained translation weights (no NLLB, no HuggingFace, no mBART).
@@ -28,7 +28,7 @@
    - **Deterministic Resume**: Restores model weights, AdamW 1st & 2nd moments, AMP GradScaler state, LR scheduler step, and full RNG states (Torch CPU/CUDA, Python, NumPy).
    - **Exact Gradient Accumulation & Token-Weighted Loss**: Dynamic scaling for partial final groups and token-weighted validation loss.
 5. **ByteLevel Multilingual Subword Tokenizer**: A shared 8,192 Byte-Pair Encoding (BPE) subword vocabulary trained from scratch across Latin, Devanagari, Tamil, and Telugu scripts with canonical Unicode NFC normalization and direction control tokens (`<2en>`, `<2hi>`, `<2ta>`, `<2te>`).
-6. **Scientifically Honest Evaluation**: 40/40 passing unit tests covering architecture, causal masking, future token leakage, tokenizer roundtrips, overfitting memorization, batch decoding clamping, and API endpoints. Partitioned records guarantee zero exact train/test overlap.
+6. **Scientifically Honest Evaluation**: 41/41 passing unit tests covering architecture, causal masking, future token leakage, tokenizer roundtrips, overfitting memorization, 3-way batch decoding clamping, and API endpoints. Partitioned records guarantee zero exact train/test overlap.
 
 ---
 
@@ -122,7 +122,7 @@ pip install -r requirements.txt
 source .venv/bin/activate
 pytest tests/ -v
 ```
-*(All 35 tests pass: SOTA RoPE, RMSNorm, SwiGLU, QK-Norm, Resumable Trainer, causal masking, tokenizer, and API endpoints).*
+*(All 41 tests pass: Empirical Overfitting, 3-Way Batch Decoding, RoPE, RMSNorm, SwiGLU, QK-Norm, Resumable Trainer, causal masking, tokenizer, and API endpoints).*
 
 ### 3. Start Application Server
 ```bash

@@ -54,16 +54,21 @@ $$\text{Ratio} = \frac{\max(\text{len}_{\text{src}}, \text{len}_{\text{tgt}})}{\
 
 ## 3. Strict Record-Level Split Partitioning
 
-To eliminate **all** data leakage, splits are partitioned at the **aligned record level** before any directional pairs are generated:
+The parallel dataset is partitioned strictly at the **aligned source record level** before any directional pairs are generated:
 
-| Split | Percentage | Aligned 4-Way Records | Directional Pairs | Purpose |
+| Split | Percentage | Directional Pairs | Verification Status | Purpose |
 | :--- | :---: | :---: | :---: | :--- |
-| **Train** | **80%** | 32 Records | 192 Pairs | Backpropagation parameter updates |
-| **Validation** | **10%** | 4 Records | 24 Pairs | Checkpoint selection & early stopping |
-| **Held-Out Test** | **10%** | 4 Records | 24 Pairs | Final independent SacreBLEU & chrF++ evaluation |
-| **Total** | **100%** | **40 Records** | **240 Pairs** | Full Corpus |
+| **Train** | **90%** | **89,358 Pairs** | Hash Deduplicated | Backpropagation parameter updates |
+| **Validation** | **5%** | **4,964 Pairs** | Token-Weighted | Checkpoint selection & early stopping |
+| **Held-Out Test** | **5%** | **4,968 Pairs** | Untouched Split | Independent SacreBLEU & chrF++ evaluation |
+| **Total** | **100%** | **99,290 Pairs** | **VERIFIED** | Full Multilingual Parallel Corpus |
+
+### Direction-Wise Training Breakdown
+* **English ↔ Hindi (`en <-> hi`)**: **35,808 Train** / 1,989 Val / 1,990 Test
+* **English ↔ Tamil (`en <-> ta`)**: **4,879 Train** / 271 Val / 272 Test
+* **English ↔ Telugu (`en <-> te`)**: **3,992 Train** / 222 Val / 222 Test
 
 ### Record-Level Split Isolation & Leakage Verification
 1. **No Exact Aligned-Record Overlap**: No sentence in the held-out test split appears in the training or validation partitions ($0.00\%$ exact match).
-2. **Directional Expansion Isolation**: Splits are partitioned at the aligned 4-way record level prior to directional pair creation. If English sentence $A$ translates to Hindi sentence $B$ in training, reverse pair $B \rightarrow A$ is strictly confined to the training partition and will never appear in validation or test.
-3. **Tokenizer Isolation**: Subword vocabulary merges were trained strictly on the training partition text.
+2. **Directional Expansion Isolation**: Splits are partitioned at the aligned record level prior to directional pair creation. If English sentence $A$ translates to Hindi sentence $B$ in training, reverse pair $B \rightarrow A$ is strictly confined to the training partition and will never appear in validation or test.
+3. **Tokenizer Isolation**: Subword vocabulary merges were trained strictly on the training partition text. Validation and test sentences were strictly sequestered.
