@@ -78,7 +78,16 @@ class RotaryEmbedding(nn.Module):
     def forward(self, q: torch.Tensor, k: torch.Tensor, offset: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Applies RoPE to query and key tensors of shape (batch, n_heads, seq_len, d_k).
+        Automatically expands frequency buffer if input sequence exceeds max_seq_len.
         """
+        needed_len = offset + max(q.size(-2), k.size(-2))
+        if needed_len > self.max_seq_len:
+            new_max = max(needed_len, self.max_seq_len * 2)
+            new_cos, new_sin = precompute_freqs_cis(self.dim, max_seq_len=new_max, theta=self.theta)
+            self.cos = new_cos.to(device=self.cos.device, dtype=self.cos.dtype)
+            self.sin = new_sin.to(device=self.sin.device, dtype=self.sin.dtype)
+            self.max_seq_len = new_max
+
         q_rot = apply_rotary_emb(q, self.cos, self.sin, offset=offset)
         k_rot = apply_rotary_emb(k, self.cos, self.sin, offset=offset)
         return q_rot, k_rot

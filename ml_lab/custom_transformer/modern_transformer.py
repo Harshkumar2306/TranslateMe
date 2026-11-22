@@ -283,8 +283,19 @@ class ModernSeq2SeqTransformer(nn.Module):
         tgt: (batch, tgt_len)
         Returns: logits (batch, tgt_len, vocab_size)
         """
+        if src.numel() == 0 or tgt.numel() == 0:
+            raise ValueError("Input tensors 'src' and 'tgt' cannot be empty.")
+
+        device = self.shared_embedding.weight.device
+        if src.device != device:
+            src = src.to(device)
+        if tgt.device != device:
+            tgt = tgt.to(device)
+
         if src_mask is None:
             src_mask = self.make_src_mask(src)
+        elif src_mask.device != device:
+            src_mask = src_mask.to(device)
 
         memory, _ = self.encode(src, src_mask=src_mask, return_attn=False)
         logits, _ = self.decode_step(
@@ -317,7 +328,16 @@ class ModernSeq2SeqTransformer(nn.Module):
         """
         self.eval()
         batch_size = src.size(0)
-        device = src.device
+        if src.numel() == 0 or src.size(1) == 0:
+            return [[] for _ in range(batch_size)]
+        if max_len <= 0:
+            return [[self.bos_idx] for _ in range(batch_size)]
+
+        device = self.shared_embedding.weight.device
+        if src.device != device:
+            src = src.to(device)
+
+        num_beams = max(1, int(num_beams))
 
         src_mask = self.make_src_mask(src)
         memory, _ = self.encode(src, src_mask=src_mask, return_attn=False)

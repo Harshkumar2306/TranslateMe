@@ -26,7 +26,7 @@ class RMSNorm(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Perform normalization in float32 for mixed-precision AMP stability
         output = self._norm(x.float()).type_as(x)
-        return output * self.weight
+        return output * self.weight.type_as(output)
 
     def extra_repr(self) -> str:
         return f"{self.weight.shape[0]}, eps={self.eps}"

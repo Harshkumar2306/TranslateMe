@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.app.core.config import settings
+from backend.app.database.session import Base, engine
 from backend.app.api.routes import router
 from backend.app.services.custom_multilingual_service import custom_multilingual_engine
 
@@ -31,6 +32,8 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Initializing TranslateMe Custom Transformer Deep Learning Services...")
     try:
+        # Initialize SQLite database schema safely during app lifespan
+        Base.metadata.create_all(bind=engine)
         custom_multilingual_engine.load_model()
         logger.info("TranslateMe Custom Transformer startup complete. Ready to serve requests!")
     except Exception as e:
@@ -64,12 +67,15 @@ if os.path.exists(frontend_dist_path):
     app.mount("/", StaticFiles(directory=frontend_dist_path, html=True), name="frontend")
 
 
+import uuid
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global unhandled exception on {request.url}: {exc}", exc_info=True)
+    error_id = str(uuid.uuid4())[:8]
+    logger.error(f"[Error ID: {error_id}] Global unhandled exception on {request.url}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Internal Server Error: {str(exc)}"}
+        content={"detail": "An internal server error occurred.", "error_id": error_id}
     )
 
 

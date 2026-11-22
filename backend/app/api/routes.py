@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
-from backend.app.database.session import get_db, Base, engine
+from backend.app.database.session import get_db
 from backend.app.models.history import TranslationHistory
 from backend.app.schemas.translation import (
     TranslateRequest,
@@ -26,11 +26,9 @@ from backend.app.schemas.translation import (
 )
 from backend.app.services.custom_multilingual_service import custom_multilingual_engine, CODE_MAP, REVERSE_MAP
 from backend.app.services.language_detector import detect_language
+from backend.app.services.document_service import extract_text_from_file, translate_document
 from backend.app.core.device import get_device_info
 from ml_lab.tokenizer import list_supported_languages, is_supported_language
-
-# Create DB tables
-Base.metadata.create_all(bind=engine)
 
 router = APIRouter()
 
@@ -209,32 +207,26 @@ async def translate_doc_endpoint(
     source_language: str = Form(...),
     target_language: str = Form(...)
 ):
-    """Extracts text from uploaded document and translates paragraph by paragraph using our custom Transformer."""
+    """
+    Extracts text from uploaded PDF or TXT document and translates paragraph by paragraph
+    using our custom Transformer, preserving structure and enforcing upload size limits.
+    """
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
     content = await file.read()
-    filename = file.filename or "uploaded_file"
-
-    try:
-        text = content.decode("utf-8", errors="replace")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read file content: {str(e)}")
-
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    if not paragraphs:
-        paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-
-    t0 = time.time()
-    translated_paras = []
-    for para in paragraphs:
-        res = custom_multilingual_engine.translate(
-            text=para,
-            source_lang=source_language,
-            target_lang=target_language,
-            num_beams=1
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Uploaded file size ({len(content) / (1024*1024):.1f}MB) exceeds the 10MB limit."
         )
-        translated_paras.append(res["translated_text"])
 
-    elapsed = round(time.time() - t0, 3)
-    full_translated = "\n\n".join(translated_paras)
+    filename = file.filename or "uploaded_file"
+    paragraphs = extract_text_from_file(file, content)
+    full_translated, elapsed = translate_document(
+        paragraphs=paragraphs,
+        source_lang=source_language,
+        target_lang=target_language,
+        max_paragraphs=50
+    )
 
     return DocumentTranslateResponse(
         filename=filename,
