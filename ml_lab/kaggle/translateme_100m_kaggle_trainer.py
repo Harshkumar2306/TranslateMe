@@ -702,7 +702,17 @@ class Kaggle100MTrainer:
         }
         torch.save(state, tmp_path)
         os.replace(tmp_path, save_path)
-        print(f"[CHECKPOINT] Saved atomic checkpoint: {save_path.name} (Step {self.global_step})")
+        print(f"[CHECKPOINT] Saved atomic checkpoint: {save_path.name} (Step {self.global_step}, Epoch {self.epoch+1})")
+
+        # In Kaggle with Persistence: Files only, mirror checkpoint to /kaggle/working/
+        if os.path.exists("/kaggle/working"):
+            try:
+                kw_path = Path("/kaggle/working") / filename
+                kw_tmp = Path("/kaggle/working") / f"{filename}.tmp"
+                torch.save(state, kw_tmp)
+                os.replace(kw_tmp, kw_path)
+            except Exception:
+                pass
 
         if is_best:
             best_path = self.checkpoint_dir / "checkpoint_best.pt"
@@ -710,6 +720,14 @@ class Kaggle100MTrainer:
             torch.save(state, tmp_best)
             os.replace(tmp_best, best_path)
             print(f"[*] Best checkpoint updated: checkpoint_best.pt (Val Loss: {self.best_val_loss:.4f})")
+            if os.path.exists("/kaggle/working"):
+                try:
+                    kw_best = Path("/kaggle/working") / "checkpoint_best.pt"
+                    kw_best_tmp = Path("/kaggle/working") / "checkpoint_best.pt.tmp"
+                    torch.save(state, kw_best_tmp)
+                    os.replace(kw_best_tmp, kw_best)
+                except Exception:
+                    pass
 
     def resume_from_checkpoint(self, checkpoint_path: str) -> bool:
         if not os.path.exists(checkpoint_path):
@@ -742,71 +760,91 @@ class Kaggle100MTrainer:
         if batches_done_in_epoch > 0:
             print(f"  [MID-EPOCH RESUME] Fast-forwarding: skipping already trained batches 0 to {batches_done_in_epoch}...")
 
-        for batch_idx, batch in enumerate(train_loader):
-            if batch_idx < batches_done_in_epoch:
-                continue
-            src = batch["src"].to(self.device, non_blocking=True)
-            tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
-            tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
+        try:
+            for batch_idx, batch in enumerate(train_loader):
+                if batch_idx < batches_done_in_epoch:
+                    continue
 
-            raw_model = self.model_engine.module if self.is_multi_gpu else self.model
-            batch_tokens = (tgt_out != raw_model.pad_idx).sum().item()
-            total_tokens += batch_tokens
-
-            chunk_start = (batch_idx // self.grad_accum) * self.grad_accum
-            actual_chunk_size = min(self.grad_accum, num_batches - chunk_start)
-
-            with autocast("cuda", enabled=self.use_amp):
-                logits = self.model_engine(src, tgt_in)
-                batch_sum_loss = self.sum_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
-                raw_loss = batch_sum_loss / max(batch_tokens, 1)
-                loss = raw_loss / actual_chunk_size
-
-            self.scaler.scale(loss).backward()
-            running_loss += raw_loss.item()
-
-            if (batch_idx + 1) % self.grad_accum == 0 or (batch_idx + 1) == num_batches:
-                self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(self.model_engine.parameters(), 1.0)
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
-                self.optimizer.zero_grad()
-
-                if self.scheduler:
-                    self.scheduler.step()
-                self.global_step += 1
-
-                if self.global_step % self.save_every_steps == 0:
+                if Path("pause.flag").exists():
+                    print("\n[PAUSE] Found 'pause.flag'! Saving checkpoint and pausing gracefully...")
+                    try:
+                        Path("pause.flag").unlink()
+                    except Exception:
+                        pass
                     self.save_atomic_checkpoint("checkpoint_latest.pt")
+                    print(f"[PAUSED] Saved checkpoint at Step {self.global_step}, Batch {batch_idx+1}.")
+                    return {"status": "paused", "epoch": self.epoch, "step": self.global_step}
 
-            if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == num_batches:
-                elapsed = time.time() - epoch_start
-                batches_done = batch_idx + 1
-                batches_per_sec = batches_done / max(elapsed, 0.001)
+                src = batch["src"].to(self.device, non_blocking=True)
+                tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
+                tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
 
-                epoch_time_left = (num_batches - batches_done) / max(batches_per_sec, 0.001)
-                epochs_remaining = max(total_epochs - (self.epoch + 1), 0)
-                total_time_left = (epochs_remaining * num_batches + (num_batches - batches_done)) / max(batches_per_sec, 0.001)
-                tok_per_sec = total_tokens / max(elapsed, 0.001)
+                raw_model = self.model_engine.module if self.is_multi_gpu else self.model
+                batch_tokens = (tgt_out != raw_model.pad_idx).sum().item()
+                total_tokens += batch_tokens
 
-                chunk_len = log_interval if (batch_idx + 1) % log_interval == 0 else (batch_idx % log_interval + 1)
-                avg_loss = running_loss / chunk_len
-                ppl = math.exp(min(avg_loss, 20.0))
-                lr = self.optimizer.param_groups[0]["lr"]
+                chunk_start = (batch_idx // self.grad_accum) * self.grad_accum
+                actual_chunk_size = min(self.grad_accum, num_batches - chunk_start)
 
-                pct_epoch = (batches_done / num_batches) * 100.0
-                total_pct = ((self.epoch * num_batches + batches_done) / (total_epochs * num_batches)) * 100.0
+                with autocast("cuda", enabled=self.use_amp):
+                    logits = self.model_engine(src, tgt_in)
+                    batch_sum_loss = self.sum_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+                    raw_loss = batch_sum_loss / max(batch_tokens, 1)
+                    loss = raw_loss / actual_chunk_size
 
-                print(
-                    f"Epoch {self.epoch+1:2d}/{total_epochs:2d} | "
-                    f"Batch {batches_done:5d}/{num_batches:5d} ({pct_epoch:4.1f}%) | "
-                    f"Loss: {avg_loss:5.3f} | PPL: {ppl:6.2f} | "
-                    f"LR: {lr:.2e} | Speed: {tok_per_sec:5.0f} tok/s | "
-                    f"Epoch Left: {format_duration(epoch_time_left)} | "
-                    f"Total ETA: {format_duration(total_time_left)}"
-                )
-                self.train_loss_history.append(avg_loss)
-                running_loss = 0.0
+                self.scaler.scale(loss).backward()
+                running_loss += raw_loss.item()
+
+                if (batch_idx + 1) % self.grad_accum == 0 or (batch_idx + 1) == num_batches:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model_engine.parameters(), 1.0)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
+
+                    if self.scheduler:
+                        self.scheduler.step()
+                    self.global_step += 1
+
+                    if self.global_step % self.save_every_steps == 0:
+                        self.save_atomic_checkpoint("checkpoint_latest.pt")
+
+                if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == num_batches:
+                    elapsed = time.time() - epoch_start
+                    batches_done = batch_idx + 1
+                    batches_per_sec = batches_done / max(elapsed, 0.001)
+
+                    epoch_time_left = (num_batches - batches_done) / max(batches_per_sec, 0.001)
+                    epochs_remaining = max(total_epochs - (self.epoch + 1), 0)
+                    total_time_left = (epochs_remaining * num_batches + (num_batches - batches_done)) / max(batches_per_sec, 0.001)
+                    tok_per_sec = total_tokens / max(elapsed, 0.001)
+
+                    chunk_len = log_interval if (batch_idx + 1) % log_interval == 0 else (batch_idx % log_interval + 1)
+                    avg_loss = running_loss / chunk_len
+                    ppl = math.exp(min(avg_loss, 20.0))
+                    lr = self.optimizer.param_groups[0]["lr"]
+
+                    pct_epoch = (batches_done / num_batches) * 100.0
+                    total_pct = ((self.epoch * num_batches + batches_done) / (total_epochs * num_batches)) * 100.0
+
+                    print(
+                        f"Epoch {self.epoch+1:2d}/{total_epochs:2d} | "
+                        f"Batch {batches_done:5d}/{num_batches:5d} ({pct_epoch:4.1f}%) | "
+                        f"Loss: {avg_loss:5.3f} | PPL: {ppl:6.2f} | "
+                        f"LR: {lr:.2e} | Speed: {tok_per_sec:5.0f} tok/s | "
+                        f"Epoch Left: {format_duration(epoch_time_left)} | "
+                        f"Total ETA: {format_duration(total_time_left)}"
+                    )
+                    self.train_loss_history.append(avg_loss)
+                    running_loss = 0.0
+
+        except KeyboardInterrupt:
+            print(f"\n[INTERRUPT] Caught Stop / Interrupt signal at Step {self.global_step}!")
+            print("Saving atomic checkpoint to preserve exact training state on disk...")
+            self.save_atomic_checkpoint("checkpoint_latest.pt")
+            print(f"[PAUSED] Saved at Step {self.global_step}, Epoch {self.epoch+1}.")
+            print("[INFO] You can now restart your Kaggle session to refresh the 12-hour timer. It will resume right here!")
+            return {"status": "interrupted", "epoch": self.epoch, "step": self.global_step}
 
         if val_loader:
             val_loss = self.evaluate(val_loader)
@@ -962,20 +1000,28 @@ def main(args_list: Optional[List[str]] = None):
         checkpoint_dir="ml_lab/checkpoints",
         gradient_accumulation_steps=args.grad_accum,
         use_amp=True,
-        save_every_steps=1000
+        save_every_steps=500
     )
 
-    # 6. Auto-Resume Check: explicit flag or latest checkpoint on disk
-    latest_ckpt = Path(trainer.checkpoint_dir) / "checkpoint_latest.pt"
-    if args.resume and os.path.exists(args.resume):
-        trainer.resume_from_checkpoint(args.resume)
-    elif latest_ckpt.exists():
-        print(f"\n[AUTO-RESUME] Found existing checkpoint at {latest_ckpt}! Resuming without losing progress...")
-        trainer.resume_from_checkpoint(str(latest_ckpt))
+    # 6. Auto-Resume Check: explicit flag or latest checkpoint on disk (/kaggle/working or local)
+    candidates = [
+        args.resume if args.resume else "",
+        str(Path(trainer.checkpoint_dir) / "checkpoint_latest.pt"),
+        "/kaggle/working/checkpoint_latest.pt",
+        "/kaggle/working/ml_lab/checkpoints/checkpoint_latest.pt"
+    ]
+    for ckpt in candidates:
+        if ckpt and os.path.exists(ckpt):
+            print(f"\n[AUTO-RESUME] Found existing checkpoint at {ckpt}! Resuming without losing progress...")
+            trainer.resume_from_checkpoint(ckpt)
+            break
 
     print(f"\n[Phase 5] Starting Training for {args.epochs} Epochs...")
     for epoch in range(trainer.epoch, args.epochs):
-        trainer.train_epoch(train_loader, val_loader, total_epochs=args.epochs, log_interval=50)
+        res = trainer.train_epoch(train_loader, val_loader, total_epochs=args.epochs, log_interval=50)
+        if isinstance(res, dict) and res.get("status") in ("paused", "interrupted"):
+            print(f"\n[PAUSED] Training halted cleanly. State is preserved on disk in /kaggle/working.")
+            break
 
     print("\n[Phase 6] Training Complete! Best Val Loss: {:.4f}".format(trainer.best_val_loss))
 
