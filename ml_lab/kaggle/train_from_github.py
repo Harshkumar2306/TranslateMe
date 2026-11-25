@@ -27,6 +27,7 @@ import signal
 import shutil
 import random
 import argparse
+import contextlib
 from pathlib import Path
 from typing import List, Tuple, Dict, Any, Optional, Iterator
 
@@ -170,58 +171,84 @@ class PreTokenizedNMTDataset(Dataset):
 
 class DistributedBucketBatchSampler(Sampler[List[int]]):
     """
-    Deterministic Length-Bucketed Sampler compatible with both single-GPU and multi-GPU DDP.
-    Every rank builds the exact same shuffled-and-bucketed global batch list per epoch,
-    ensuring synchronized step counts across ranks with <10% padding overhead.
+    Deterministic Length-Bucketed Sampler (Fixed batch_size or Token-Budget Dynamic Batching)
+    compatible with both single-GPU and multi-GPU DDP.
+    When `max_tokens > 0`, short sentences scale up to `max_batch_size` (saturating T4 Tensor Cores)
+    while long sentences automatically shrink batch size to prevent CUDA OOM.
     """
     def __init__(
         self,
         lengths: List[int],
-        batch_size: int,
+        batch_size: int = 32,
+        max_tokens: int = 0,
+        max_batch_size: int = 128,
         rank: int = 0,
         world_size: int = 1,
         seed: int = 42,
-        mega_batch_mult: int = 40
+        mega_batch_size: int = 4096
     ):
         self.lengths = lengths
         self.batch_size = batch_size
+        self.max_tokens = max_tokens
+        self.max_batch_size = max_batch_size
         self.rank = rank
         self.world_size = max(1, world_size)
         self.seed = seed
-        self.mega_batch_mult = mega_batch_mult
+        self.mega_batch_size = mega_batch_size
         self.epoch = 0
+        self._cached_epoch: Optional[int] = None
+        self._cached_batches: Optional[List[List[int]]] = None
 
     def set_epoch(self, epoch: int):
+        if self._cached_epoch != epoch:
+            self._cached_batches = None
         self.epoch = epoch
 
     def _build_global_batches(self) -> List[List[int]]:
+        if self._cached_batches is not None and self._cached_epoch == self.epoch:
+            return self._cached_batches
+
         g = torch.Generator()
         g.manual_seed(self.seed + self.epoch)
         indices = torch.randperm(len(self.lengths), generator=g).tolist()
 
-        mega_size = self.batch_size * self.mega_batch_mult
         batches: List[List[int]] = []
-        for i in range(0, len(indices), mega_size):
-            chunk = indices[i:i + mega_size]
+        for i in range(0, len(indices), self.mega_batch_size):
+            chunk = indices[i:i + self.mega_batch_size]
             chunk.sort(key=lambda idx: self.lengths[idx])
-            for j in range(0, len(chunk), self.batch_size):
-                batches.append(chunk[j:j + self.batch_size])
 
-        # Trim trailing partial world-group so all DDP ranks execute equal batch counts
+            if self.max_tokens > 0:
+                cur_batch: List[int] = []
+                cur_max_len = 0
+                for idx in chunk:
+                    l = self.lengths[idx]
+                    next_max = max(cur_max_len, l)
+                    if cur_batch and ((len(cur_batch) + 1) * next_max > self.max_tokens or len(cur_batch) >= self.max_batch_size):
+                        batches.append(cur_batch)
+                        cur_batch = [idx]
+                        cur_max_len = l
+                    else:
+                        cur_batch.append(idx)
+                        cur_max_len = next_max
+                if cur_batch:
+                    batches.append(cur_batch)
+            else:
+                for j in range(0, len(chunk), self.batch_size):
+                    batches.append(chunk[j:j + self.batch_size])
+
         usable = (len(batches) // self.world_size) * self.world_size
         if usable == 0 and batches:
-            # Tiny smoke datasets smaller than world_size: duplicate cleanly across ranks
             while len(batches) < self.world_size:
                 batches.append(batches[-1])
             usable = self.world_size
 
         perm = torch.randperm(len(batches), generator=g).tolist()[:usable]
-        return [batches[idx] for idx in perm]
+        self._cached_batches = [batches[idx] for idx in perm]
+        self._cached_epoch = self.epoch
+        return self._cached_batches
 
     def __len__(self) -> int:
-        total_raw = (len(self.lengths) + self.batch_size - 1) // self.batch_size
-        usable = max(1, total_raw // self.world_size) if total_raw >= self.world_size else 1
-        return usable
+        return len(self._build_global_batches()) // self.world_size
 
     def __iter__(self) -> Iterator[List[int]]:
         global_batches = self._build_global_batches()
@@ -524,17 +551,22 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
     if args.epochs <= 0:
         raise ValueError("--epochs must be >= 1")
 
-    # Auto-fit batch_size on <=16GB GPUs (e.g. Kaggle Tesla T4 14.6 GiB) while preserving exact effective batch size
+    # Auto-fit token budget / batch_size on <=16GB GPUs (e.g. Kaggle Tesla T4 14.6 GiB)
     if device.type == "cuda" and not args.no_auto_vram_fit:
         vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
-        if vram_gb < 17.0 and args.batch_size > 32:
-            factor = math.ceil(args.batch_size / 32)
-            new_bs = max(16, args.batch_size // factor)
-            new_accum = args.grad_accum * factor
-            if rank == 0:
-                print(f"[Auto-VRAM Fit] {vram_gb:.1f} GB GPU detected: adjusting batch_per_gpu {args.batch_size}->{new_bs}, grad_accum {args.grad_accum}->{new_accum} (effective_batch preserved)")
-            args.batch_size = new_bs
-            args.grad_accum = new_accum
+        if vram_gb < 17.0:
+            if args.max_tokens > 3600:
+                if rank == 0:
+                    print(f"[Auto-VRAM Fit] {vram_gb:.1f} GB GPU detected: clamping max_tokens {args.max_tokens}->3600")
+                args.max_tokens = 3600
+            elif args.max_tokens == 0 and args.batch_size > 32:
+                factor = math.ceil(args.batch_size / 32)
+                new_bs = max(16, args.batch_size // factor)
+                new_accum = args.grad_accum * factor
+                if rank == 0:
+                    print(f"[Auto-VRAM Fit] {vram_gb:.1f} GB GPU detected: adjusting batch_per_gpu {args.batch_size}->{new_bs}, grad_accum {args.grad_accum}->{new_accum}")
+                args.batch_size = new_bs
+                args.grad_accum = new_accum
 
     ckpt_dir = Path(ckpt_dir_str)
     tokenizer = MultilingualSubwordTokenizer.load(tokenizer_path)
@@ -545,10 +577,21 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
 
     collate_fn = build_tensor_collate_fn(pad_id=tokenizer.pad_id)
     train_sampler = DistributedBucketBatchSampler(
-        train_ds.lengths, batch_size=args.batch_size, rank=rank, world_size=world_size, seed=args.seed
+        train_ds.lengths,
+        batch_size=args.batch_size,
+        max_tokens=args.max_tokens,
+        max_batch_size=args.max_batch_size,
+        rank=rank,
+        world_size=world_size,
+        seed=args.seed
     )
     val_sampler = DistributedBucketBatchSampler(
-        val_ds.lengths, batch_size=args.batch_size, rank=rank, world_size=world_size, seed=args.seed
+        val_ds.lengths,
+        batch_size=min(args.batch_size, 32),
+        max_tokens=0,
+        rank=rank,
+        world_size=world_size,
+        seed=args.seed
     )
     # Pre-tokenized int16 tensors slice directly in RAM in microseconds; num_workers=0 avoids
     # duplicating the 837 MB tensor cache across spawn DataLoader workers in DDP.
@@ -582,8 +625,9 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
     raw_model = ModernSeq2SeqTransformer(config).to(device)
     if rank == 0:
         p_cnt = raw_model.count_parameters()
+        batch_desc = f"max_tokens={args.max_tokens}/GPU (cap {args.max_batch_size})" if args.max_tokens > 0 else f"batch_per_gpu={args.batch_size}"
         print(f"\n[Model] Option 1 Asymmetric ModernSeq2SeqTransformer ({args.enc_layers}E/{args.dec_layers}D, d={args.d_model}, vocab={tokenizer.vocab_size:,}): {p_cnt:,} ({p_cnt/1e6:.2f}M params)")
-        print(f"[Hardware] world_size={world_size} | batch_per_gpu={args.batch_size} | grad_accum={args.grad_accum} | effective_batch={args.batch_size * world_size * args.grad_accum}")
+        print(f"[Hardware] world_size={world_size} | {batch_desc} | grad_accum={args.grad_accum} | DDP no_sync=True")
 
     model_engine: nn.Module = DDP(raw_model, device_ids=[rank], output_device=rank) if use_ddp else raw_model
 
@@ -688,28 +732,32 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
 
             chunk_start = (batch_idx // args.grad_accum) * args.grad_accum
             actual_chunk_size = min(args.grad_accum, num_batches - chunk_start)
+            is_step_boundary = ((batch_idx + 1) % args.grad_accum == 0) or ((batch_idx + 1) == num_batches)
+            sync_ctx = contextlib.nullcontext() if (not use_ddp or is_step_boundary) else model_engine.no_sync()
 
-            with autocast("cuda", dtype=amp_dtype, enabled=use_amp):
-                logits = model_engine(src, tgt_in)
-                flat_logits = logits.view(-1, logits.size(-1))
-                flat_targets = tgt_out.view(-1)
-                valid_flat = valid_mask.view(-1)
-                # Compute loss strictly over non-padding tokens (saves ~25-40% softmax/CE VRAM)
-                # Soft-cap=30.0 already bounds logits cleanly without extra FP32 Z-loss copy
-                if valid_flat.any():
-                    batch_sum_loss = sum_criterion(flat_logits[valid_flat], flat_targets[valid_flat])
-                else:
-                    batch_sum_loss = flat_logits.sum() * 0.0
-                raw_loss = batch_sum_loss / max(batch_tokens, 1)
-                loss = raw_loss / actual_chunk_size
+            with sync_ctx:
+                with autocast("cuda", dtype=amp_dtype, enabled=use_amp):
+                    logits = model_engine(src, tgt_in)
+                    flat_logits = logits.view(-1, logits.size(-1))
+                    flat_targets = tgt_out.view(-1)
+                    valid_flat = valid_mask.view(-1)
+                    # Compute loss strictly over non-padding tokens (saves ~25-40% softmax/CE VRAM)
+                    # Soft-cap=30.0 already bounds logits cleanly without extra FP32 Z-loss copy
+                    if valid_flat.any():
+                        batch_sum_loss = sum_criterion(flat_logits[valid_flat], flat_targets[valid_flat])
+                    else:
+                        batch_sum_loss = flat_logits.sum() * 0.0
+                    raw_loss = batch_sum_loss / max(batch_tokens, 1)
+                    loss = raw_loss / actual_chunk_size
 
-            scaler.scale(loss).backward()
+                scaler.scale(loss).backward()
+
             running_loss += raw_loss.item()
             batches_in_window += 1
             batches_processed_run += 1
             epoch_batch_idx = batch_idx + 1
 
-            if (batch_idx + 1) % args.grad_accum == 0 or (batch_idx + 1) == num_batches:
+            if is_step_boundary:
                 scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(model_engine.parameters(), 1.0)
                 scaler.step(optimizer)
@@ -827,8 +875,10 @@ def parse_args(args_list: Optional[List[str]] = None):
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size PER GPU (32 x 2 T4 x 4 accum = 256 effective)")
-    parser.add_argument("--grad_accum", type=int, default=4)
+    parser.add_argument("--max_tokens", type=int, default=3600, help="Token-budget dynamic batching per GPU (0 disables and uses --batch_size)")
+    parser.add_argument("--max_batch_size", type=int, default=128, help="Max sentences per micro-batch under token-budget batching")
+    parser.add_argument("--batch_size", type=int, default=32, help="Fallback fixed batch size per GPU when --max_tokens=0")
+    parser.add_argument("--grad_accum", type=int, default=2)
     parser.add_argument("--no_auto_vram_fit", action="store_true", help="Disable automatic <=16GB T4 batch splitting")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--warmup", type=int, default=2000)

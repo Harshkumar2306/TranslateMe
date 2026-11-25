@@ -476,6 +476,16 @@ def test_github_ddp_trainer_pause_resume_and_probes(tmp_path):
     sampler = DistributedBucketBatchSampler([10, 20, 30, 40], batch_size=2)
     assert len(pickle.loads(pickle.dumps(sampler))) == 2
 
+    # Verify Token-Budget Dynamic Batching obeys max_tokens limit and stays deterministic per epoch
+    lengths = [10, 12, 14, 16, 100, 110, 120, 20, 22, 24]
+    tok_sampler = DistributedBucketBatchSampler(lengths, max_tokens=60, max_batch_size=8, rank=0, world_size=2, seed=42)
+    b_ep0 = list(tok_sampler)
+    assert len(b_ep0) == len(tok_sampler)
+    for b in b_ep0:
+        assert len(b) <= 8
+        assert len(b) == 1 or len(b) * max(lengths[i] for i in b) <= 60
+    assert list(tok_sampler) == b_ep0  # Same epoch -> identical deterministic order
+
 
 
 
