@@ -945,17 +945,24 @@ class LengthBucketBatchSampler(Sampler[List[int]]):
             yield batches[b_idx]
 
 
-def build_tensor_collate_fn(pad_id: int = 0):
-    def collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+class TensorCollateFn:
+    """Top-level picklable collate functor compatible with Python 3.13+ spawn DataLoader workers."""
+    def __init__(self, pad_id: int = 0):
+        self.pad_id = pad_id
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         src_list = [b[0] for b in batch]
         tgt_in_list = [b[1][:-1] for b in batch]
         tgt_out_list = [b[1][1:] for b in batch]
         return {
-            "src": nn.utils.rnn.pad_sequence(src_list, batch_first=True, padding_value=pad_id),
-            "tgt_in": nn.utils.rnn.pad_sequence(tgt_in_list, batch_first=True, padding_value=pad_id),
-            "tgt_out": nn.utils.rnn.pad_sequence(tgt_out_list, batch_first=True, padding_value=pad_id),
+            "src": nn.utils.rnn.pad_sequence(src_list, batch_first=True, padding_value=self.pad_id),
+            "tgt_in": nn.utils.rnn.pad_sequence(tgt_in_list, batch_first=True, padding_value=self.pad_id),
+            "tgt_out": nn.utils.rnn.pad_sequence(tgt_out_list, batch_first=True, padding_value=self.pad_id),
         }
-    return collate_fn
+
+
+def build_tensor_collate_fn(pad_id: int = 0) -> TensorCollateFn:
+    return TensorCollateFn(pad_id=pad_id)
 
 
 def configure_adamw_optimizer(

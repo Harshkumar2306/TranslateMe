@@ -468,6 +468,14 @@ def test_github_ddp_trainer_pause_resume_and_probes(tmp_path):
     assert (ckpt_dir / "checkpoint_best.pt").exists()
     assert (ckpt_dir / "training_progress.json").exists()
 
+    # Verify TensorCollateFn and DistributedBucketBatchSampler are picklable under spawn
+    import pickle
+    from ml_lab.kaggle.train_from_github import build_tensor_collate_fn, DistributedBucketBatchSampler
+    fn = build_tensor_collate_fn(pad_id=0)
+    assert pickle.loads(pickle.dumps(fn)).pad_id == 0
+    sampler = DistributedBucketBatchSampler([10, 20, 30, 40], batch_size=2)
+    assert len(pickle.loads(pickle.dumps(sampler))) == 2
+
 
 
 

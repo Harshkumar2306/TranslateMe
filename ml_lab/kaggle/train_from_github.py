@@ -228,17 +228,24 @@ class DistributedBucketBatchSampler(Sampler[List[int]]):
             yield global_batches[step_idx]
 
 
-def build_tensor_collate_fn(pad_id: int = 0):
-    def collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+class TensorCollateFn:
+    """Top-level picklable collate functor compatible with Python 3.13+ spawn DataLoader workers."""
+    def __init__(self, pad_id: int = 0):
+        self.pad_id = pad_id
+
+    def __call__(self, batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         src_list = [b[0] for b in batch]
         tgt_in_list = [b[1][:-1] for b in batch]
         tgt_out_list = [b[1][1:] for b in batch]
         return {
-            "src": nn.utils.rnn.pad_sequence(src_list, batch_first=True, padding_value=pad_id),
-            "tgt_in": nn.utils.rnn.pad_sequence(tgt_in_list, batch_first=True, padding_value=pad_id),
-            "tgt_out": nn.utils.rnn.pad_sequence(tgt_out_list, batch_first=True, padding_value=pad_id),
+            "src": nn.utils.rnn.pad_sequence(src_list, batch_first=True, padding_value=self.pad_id),
+            "tgt_in": nn.utils.rnn.pad_sequence(tgt_in_list, batch_first=True, padding_value=self.pad_id),
+            "tgt_out": nn.utils.rnn.pad_sequence(tgt_out_list, batch_first=True, padding_value=self.pad_id),
         }
-    return collate_fn
+
+
+def build_tensor_collate_fn(pad_id: int = 0) -> TensorCollateFn:
+    return TensorCollateFn(pad_id=pad_id)
 
 
 # ==============================================================================
@@ -527,14 +534,15 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
     val_sampler = DistributedBucketBatchSampler(
         val_ds.lengths, batch_size=args.batch_size, rank=rank, world_size=world_size, seed=args.seed
     )
-    num_workers = 2 if (sys.platform != "win32" and len(train_ds) > 5000) else 0
+    # Pre-tokenized int16 tensors slice directly in RAM in microseconds; num_workers=0 avoids
+    # duplicating the 837 MB tensor cache across spawn DataLoader workers in DDP.
     train_loader = DataLoader(
         train_ds, batch_sampler=train_sampler, collate_fn=collate_fn,
-        num_workers=num_workers, pin_memory=(device.type == "cuda")
+        num_workers=0, pin_memory=(device.type == "cuda")
     )
     val_loader = DataLoader(
         val_ds, batch_sampler=val_sampler, collate_fn=collate_fn,
-        num_workers=num_workers, pin_memory=(device.type == "cuda")
+        num_workers=0, pin_memory=(device.type == "cuda")
     )
 
     # Option 1 Model: 8 Enc / 4 Dec, d_model=768, 12 heads, d_ff=2048, vocab=24,576 (~113.29M params)
