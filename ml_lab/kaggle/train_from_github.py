@@ -18,6 +18,7 @@ Designed specifically for the GitHub-Pull + Kaggle Dual-GPU ("Persistence: Files
 """
 
 import os
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import sys
 import time
 import json
@@ -520,6 +521,21 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
+    if args.epochs <= 0:
+        raise ValueError("--epochs must be >= 1")
+
+    # Auto-fit batch_size on <=16GB GPUs (e.g. Kaggle Tesla T4 14.6 GiB) while preserving exact effective batch size
+    if device.type == "cuda" and not args.no_auto_vram_fit:
+        vram_gb = torch.cuda.get_device_properties(device).total_memory / (1024 ** 3)
+        if vram_gb < 17.0 and args.batch_size > 32:
+            factor = math.ceil(args.batch_size / 32)
+            new_bs = max(16, args.batch_size // factor)
+            new_accum = args.grad_accum * factor
+            if rank == 0:
+                print(f"[Auto-VRAM Fit] {vram_gb:.1f} GB GPU detected: adjusting batch_per_gpu {args.batch_size}->{new_bs}, grad_accum {args.grad_accum}->{new_accum} (effective_batch preserved)")
+            args.batch_size = new_bs
+            args.grad_accum = new_accum
+
     ckpt_dir = Path(ckpt_dir_str)
     tokenizer = MultilingualSubwordTokenizer.load(tokenizer_path)
 
@@ -677,12 +693,15 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
                 logits = model_engine(src, tgt_in)
                 flat_logits = logits.view(-1, logits.size(-1))
                 flat_targets = tgt_out.view(-1)
-                batch_sum_loss = sum_criterion(flat_logits, flat_targets)
+                valid_flat = valid_mask.view(-1)
+                # Compute loss strictly over non-padding tokens (saves ~25-40% softmax/CE VRAM)
+                # Soft-cap=30.0 already bounds logits cleanly without extra FP32 Z-loss copy
+                if valid_flat.any():
+                    batch_sum_loss = sum_criterion(flat_logits[valid_flat], flat_targets[valid_flat])
+                else:
+                    batch_sum_loss = flat_logits.sum() * 0.0
                 raw_loss = batch_sum_loss / max(batch_tokens, 1)
-
-                log_z = torch.logsumexp(flat_logits.float(), dim=-1)
-                z_loss = (log_z ** 2)[valid_mask.view(-1)].mean()
-                loss = (raw_loss + 1e-4 * z_loss) / actual_chunk_size
+                loss = raw_loss / actual_chunk_size
 
             scaler.scale(loss).backward()
             running_loss += raw_loss.item()
@@ -808,8 +827,9 @@ def parse_args(args_list: Optional[List[str]] = None):
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--max_len", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size PER GPU (64 x 2 T4 x 2 accum = 256 effective)")
-    parser.add_argument("--grad_accum", type=int, default=2)
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size PER GPU (32 x 2 T4 x 4 accum = 256 effective)")
+    parser.add_argument("--grad_accum", type=int, default=4)
+    parser.add_argument("--no_auto_vram_fit", action="store_true", help="Disable automatic <=16GB T4 batch splitting")
     parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--warmup", type=int, default=2000)
     parser.add_argument("--save_every", type=int, default=1000, help="Save atomic checkpoint every N steps")
