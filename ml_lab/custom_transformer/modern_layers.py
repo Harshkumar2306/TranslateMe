@@ -156,3 +156,48 @@ class ModernDecoderLayer(nn.Module):
         x = x + self.dropout(self.gamma_3 * self.ffn(self.norm3(x)))
 
         return x, cross_weights
+
+    def forward_cached(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = True,
+        return_cross_attn: bool = False,
+        offset: int = 0,
+        past_kv: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]:
+        """KV-cached forward pass for fast O(L) autoregressive decoding."""
+        self_past_kv, cross_past_kv = past_kv if past_kv is not None else (None, None)
+
+        # 1. Pre-LN Causal Self-Attention with LayerScale + KV-cache
+        norm_x = self.norm1(x)
+        self_out, _, new_self_kv = self.self_attn.forward_cached(
+            norm_x, norm_x, norm_x,
+            mask=tgt_mask,
+            is_causal=is_causal,
+            return_attn=False,
+            offset=offset,
+            past_kv=self_past_kv,
+            is_cross_attn=False
+        )
+        x = x + self.dropout(self.gamma_1 * self_out)
+
+        # 2. Pre-LN Cross-Attention over Encoder Memory with cached K/V projections
+        norm_x = self.norm2(x)
+        cross_out, cross_weights, new_cross_kv = self.cross_attn.forward_cached(
+            norm_x, memory, memory,
+            mask=memory_mask,
+            is_causal=False,
+            return_attn=return_cross_attn,
+            offset=0,
+            past_kv=cross_past_kv,
+            is_cross_attn=True
+        )
+        x = x + self.dropout(self.gamma_2 * cross_out)
+
+        # 3. Pre-LN SwiGLU Feed-Forward with LayerScale
+        x = x + self.dropout(self.gamma_3 * self.ffn(self.norm3(x)))
+
+        return x, cross_weights, (new_self_kv, new_cross_kv)

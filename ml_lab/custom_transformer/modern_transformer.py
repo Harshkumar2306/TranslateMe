@@ -66,10 +66,11 @@ class ModernTransformerConfig:
         )
 
     @classmethod
-    def modern_asymmetric_100m(cls, vocab_size: int = 16384) -> "ModernTransformerConfig":
+    def modern_asymmetric_100m(cls, vocab_size: int = 24576) -> "ModernTransformerConfig":
         """
-        Asymmetric Fast-Inference 100M Configuration (~106.9M Parameters):
-        8 Deep Encoder Layers for rich source semantics, 4 Fast Decoder Layers for 33% lower latency.
+        Option 1 SOTA Asymmetric Any-to-Any Configuration (113.29M Parameters @ 24,576 vocab):
+        8 Deep Encoder Layers for rich cross-lingual semantics across EN/HI/TA/TE,
+        4 Fast Decoder Layers for ~33% faster autoregressive decoding.
         """
         return cls(
             vocab_size=vocab_size,
@@ -187,12 +188,27 @@ class ModernSeq2SeqTransformer(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
-        """Initializes linear and embedding weights for stable deep training."""
-        for name, p in self.named_parameters():
-            if p.dim() > 1 and "weight" in name and not isinstance(p, nn.Embedding):
-                nn.init.xavier_uniform_(p)
-            elif isinstance(p, nn.Embedding):
-                nn.init.normal_(p, mean=0.0, std=1.0 / math.sqrt(self.d_model))
+        """
+        Initializes embeddings, projections, and residual output layers for deep Pre-LN stability.
+        Uses GPT-2 / LLaMA-style residual depth scaling on output projections (w_o, w_down).
+        """
+        total_depth = max(1, self.config.num_encoder_layers + self.config.num_decoder_layers)
+        residual_scale = 1.0 / math.sqrt(2.0 * total_depth)
+
+        for name, module in self.named_modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if name.endswith(("w_o", "w_down")):
+                    module.weight.data.mul_(residual_scale)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, mean=0.0, std=1.0 / math.sqrt(self.d_model))
+                if module.padding_idx is not None:
+                    module.weight.data[module.padding_idx].zero_()
+
+        if self.config.share_embeddings:
+            self.lm_head.weight = self.shared_embedding.weight
 
     def count_parameters(self) -> int:
         """Returns total number of unique trainable parameters."""
@@ -270,6 +286,104 @@ class ModernSeq2SeqTransformer(nn.Module):
 
         return logits.contiguous(), cross_attn_list
 
+    def decode_step_cached(
+        self,
+        tgt: torch.Tensor,
+        memory: torch.Tensor,
+        past_kvs: Optional[List[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]] = None,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = True,
+        return_cross_attn: bool = False
+    ) -> Tuple[torch.Tensor, List[Optional[torch.Tensor]], List[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]]:
+        """
+        KV-cached decoding step for fast O(L) autoregressive generation.
+        Caches decoder self-attention K/V (with RoPE offset) and static encoder memory cross-attention K/V.
+        """
+        offset = past_kvs[0][0][0].size(-2) if past_kvs is not None else 0
+        x = self.shared_embedding(tgt) * math.sqrt(self.d_model)
+        x = self.emb_dropout(x)
+
+        cross_attn_list: List[Optional[torch.Tensor]] = []
+        new_kvs: List[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]] = []
+        for idx, layer in enumerate(self.decoder_layers):
+            layer_past = past_kvs[idx] if past_kvs is not None else None
+            x, cross_attn, present_kv = layer.forward_cached(
+                x,
+                memory=memory,
+                tgt_mask=tgt_mask,
+                memory_mask=memory_mask,
+                is_causal=is_causal,
+                return_cross_attn=return_cross_attn,
+                offset=offset,
+                past_kv=layer_past
+            )
+            new_kvs.append(present_kv)
+            if return_cross_attn:
+                cross_attn_list.append(cross_attn)
+
+        x = self.decoder_final_norm(x)
+        logits = self.lm_head(x)
+
+        if self.config.soft_cap is not None and self.config.soft_cap > 0:
+            logits = self.config.soft_cap * torch.tanh(logits / self.config.soft_cap)
+
+        return logits.contiguous(), cross_attn_list, new_kvs
+
+    def _apply_decoding_constraints(
+        self,
+        logits: torch.Tensor,
+        sequences: List[List[int]],
+        repetition_penalty: float,
+        no_repeat_ngram_size: int,
+        script_mask: Optional[torch.Tensor],
+        bos_idx: int
+    ) -> torch.Tensor:
+        """Applies repetition penalty, n-gram blocking, and foreign script masking uniformly to (N, vocab)."""
+        out = logits.clone()
+        neg_inf = -1e4
+
+        if repetition_penalty != 1.0:
+            for b, seq in enumerate(sequences):
+                for tok in set(seq):
+                    if tok != self.pad_idx and tok != bos_idx:
+                        if out[b, tok] > 0:
+                            out[b, tok] /= repetition_penalty
+                        else:
+                            out[b, tok] *= repetition_penalty
+
+        if no_repeat_ngram_size > 0:
+            n = no_repeat_ngram_size
+            for b, seq in enumerate(sequences):
+                if n == 1:
+                    for tok in set(seq):
+                        if tok != self.pad_idx and tok != bos_idx:
+                            out[b, tok] = neg_inf
+                elif len(seq) >= n - 1:
+                    prefix = tuple(seq[-(n - 1):]) if n > 1 else ()
+                    for i in range(len(seq) - n + 1):
+                        if tuple(seq[i : i + n - 1]) == prefix:
+                            out[b, seq[i + n - 1]] = neg_inf
+
+        if script_mask is not None:
+            out.masked_fill_(script_mask.to(out.device), neg_inf)
+
+        return out
+
+    @staticmethod
+    def _select_past_kvs(
+        past_kvs: List[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]],
+        beam_indices: torch.Tensor
+    ) -> List[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]:
+        """Reorders cached self-attention and cross-attention K/V tensors by selected beam indices."""
+        selected = []
+        for (sk, sv), (ck, cv) in past_kvs:
+            selected.append((
+                (sk.index_select(0, beam_indices), sv.index_select(0, beam_indices)),
+                (ck.index_select(0, beam_indices), cv.index_select(0, beam_indices))
+            ))
+        return selected
+
     def forward(
         self,
         src: torch.Tensor,
@@ -309,6 +423,113 @@ class ModernSeq2SeqTransformer(nn.Module):
         return logits
 
     @torch.no_grad()
+    def _beam_search_single_kv(
+        self,
+        memory: torch.Tensor,
+        src_mask: torch.Tensor,
+        init_tokens: List[int],
+        max_len: int,
+        num_beams: int,
+        repetition_penalty: float,
+        no_repeat_ngram_size: int,
+        length_penalty: float,
+        script_mask: Optional[torch.Tensor],
+        bos_idx: int,
+        eos_idx: int
+    ) -> List[Tuple[List[int], float]]:
+        """Batched KV-cached beam search for a single source sequence."""
+        device = memory.device
+
+        def score_fn(seq_len: int, raw_score: float) -> float:
+            lp = ((5.0 + seq_len) / 6.0) ** length_penalty if length_penalty > 0 else 1.0
+            return raw_score / lp
+
+        # Prefill step with initial tokens -> batch=1
+        prefix_tensor = torch.tensor([init_tokens], dtype=torch.long, device=device)
+        logits, _, past_kvs = self.decode_step_cached(
+            prefix_tensor, memory=memory, past_kvs=None, memory_mask=src_mask, is_causal=True
+        )
+        next_logits = self._apply_decoding_constraints(
+            logits[:, -1, :], [init_tokens], repetition_penalty, no_repeat_ngram_size, script_mask, bos_idx
+        )
+        log_probs = F.log_softmax(next_logits[0], dim=-1)
+        topk_lp, topk_tok = torch.topk(log_probs, min(num_beams * 2, log_probs.size(-1)))
+
+        active_beams: List[Tuple[List[int], float, int]] = []
+        completed: List[Tuple[List[int], float]] = []
+
+        for lp, tok in zip(topk_lp.tolist(), topk_tok.tolist()):
+            if lp <= -1e3:
+                continue
+            new_seq = init_tokens + [tok]
+            if tok == eos_idx:
+                completed.append((new_seq, lp))
+            else:
+                active_beams.append((new_seq, lp, 0))
+
+        active_beams.sort(key=lambda c: score_fn(len(c[0]), c[1]), reverse=True)
+        active_beams = active_beams[:num_beams]
+
+        if not active_beams:
+            pool = completed if completed else [(init_tokens, 0.0)]
+            pool.sort(key=lambda c: score_fn(len(c[0]), c[1]), reverse=True)
+            return pool[:num_beams]
+
+        # Expand past_kvs for surviving active beams (all share parent index 0)
+        parent_idx = torch.zeros(len(active_beams), dtype=torch.long, device=device)
+        beam_kvs = self._select_past_kvs(past_kvs, parent_idx)
+
+        for _ in range(1, max_len):
+            k_active = len(active_beams)
+            last_tokens = torch.tensor([[b[0][-1]] for b in active_beams], dtype=torch.long, device=device)
+            b_mem = memory.expand(k_active, -1, -1)
+            b_mask = src_mask.expand(k_active, -1, -1)
+
+            logits, _, new_kvs = self.decode_step_cached(
+                last_tokens, memory=b_mem, past_kvs=beam_kvs, memory_mask=b_mask, is_causal=True
+            )
+            constrained = self._apply_decoding_constraints(
+                logits[:, -1, :], [b[0] for b in active_beams],
+                repetition_penalty, no_repeat_ngram_size, script_mask, bos_idx
+            )
+            step_log_probs = F.log_softmax(constrained, dim=-1)
+            topk_lp, topk_tok = torch.topk(step_log_probs, min(num_beams * 2, step_log_probs.size(-1)), dim=-1)
+
+            candidates: List[Tuple[List[int], float, int]] = []
+            for beam_i, (seq, score, _) in enumerate(active_beams):
+                for lp, tok in zip(topk_lp[beam_i].tolist(), topk_tok[beam_i].tolist()):
+                    if lp <= -1e3:
+                        continue
+                    new_seq = seq + [tok]
+                    new_score = score + lp
+                    if tok == eos_idx:
+                        completed.append((new_seq, new_score))
+                    else:
+                        candidates.append((new_seq, new_score, beam_i))
+
+            if len(completed) >= num_beams:
+                completed_sorted = sorted(completed, key=lambda c: score_fn(len(c[0]), c[1]), reverse=True)
+                worst_top_completed = score_fn(len(completed_sorted[num_beams - 1][0]), completed_sorted[num_beams - 1][1])
+                best_active = max(
+                    (score_fn(len(c[0]), c[1]) for c in candidates), default=-float("inf")
+                )
+                if worst_top_completed >= best_active:
+                    break
+
+            if not candidates:
+                break
+
+            candidates.sort(key=lambda c: score_fn(len(c[0]), c[1]), reverse=True)
+            chosen = candidates[:num_beams]
+            parent_idx = torch.tensor([c[2] for c in chosen], dtype=torch.long, device=device)
+            beam_kvs = self._select_past_kvs(new_kvs, parent_idx)
+            active_beams = chosen
+
+        pool = completed if completed else [(b[0], b[1]) for b in active_beams]
+        pool.sort(key=lambda c: score_fn(len(c[0]), c[1]), reverse=True)
+        return pool[:num_beams]
+
+    @torch.no_grad()
     def generate(
         self,
         src: torch.Tensor,
@@ -318,170 +539,97 @@ class ModernSeq2SeqTransformer(nn.Module):
         no_repeat_ngram_size: int = 3,
         length_penalty: float = 0.6,
         script_mask: Optional[torch.Tensor] = None,
-        prefix_tokens: Optional[List[int]] = None
+        prefix_tokens: Optional[List[int]] = None,
+        bos_idx: Optional[int] = None,
+        eos_idx: Optional[int] = None
     ) -> List[List[int]]:
         """
-        Autoregressive sequence generation with Greedy or Beam Search.
-        Includes Gemma 2 logit soft-capping, script masking, 3-gram repetition blocking,
+        KV-cached autoregressive sequence generation with Greedy or Batched Beam Search.
+        Includes Gemma 2 logit soft-capping, script masking, n-gram repetition blocking,
         and robust finished-sequence clamping for batch inference.
-        src: (batch, src_len)
         """
         self.eval()
         batch_size = src.size(0)
+        bos = self.bos_idx if bos_idx is None else bos_idx
+        eos = self.eos_idx if eos_idx is None else eos_idx
+
         if src.numel() == 0 or src.size(1) == 0:
             return [[] for _ in range(batch_size)]
         if max_len <= 0:
-            return [[self.bos_idx] for _ in range(batch_size)]
+            return [[bos] for _ in range(batch_size)]
 
         device = self.shared_embedding.weight.device
         if src.device != device:
             src = src.to(device)
 
         num_beams = max(1, int(num_beams))
-
         src_mask = self.make_src_mask(src)
         memory, _ = self.encode(src, src_mask=src_mask, return_attn=False)
 
-        if prefix_tokens is not None and len(prefix_tokens) > 0:
-            init_tokens = [self.bos_idx] + prefix_tokens
-        else:
-            init_tokens = [self.bos_idx]
+        init_tokens = [bos] + list(prefix_tokens) if prefix_tokens else [bos]
 
         if num_beams == 1:
-            # Greedy decoding with batch-correct finished sequence clamping
+            # Fast KV-cached Greedy Decoding with batch-correct finished sequence clamping
             generated = torch.tensor([init_tokens] * batch_size, dtype=torch.long, device=device)
             finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
+            past_kvs = None
+            step_input = generated
 
             for _ in range(max_len):
-                logits, _ = self.decode_step(
-                    generated,
+                logits, _, past_kvs = self.decode_step_cached(
+                    step_input,
                     memory=memory,
+                    past_kvs=past_kvs,
                     memory_mask=src_mask,
                     is_causal=True
                 )
-                next_token_logits = logits[:, -1, :].clone()
-
-                # Apply repetition penalty
-                if repetition_penalty != 1.0:
-                    for b in range(batch_size):
-                        for tok in set(generated[b].tolist()):
-                            if tok != self.pad_idx and tok != self.bos_idx:
-                                if next_token_logits[b, tok] > 0:
-                                    next_token_logits[b, tok] /= repetition_penalty
-                                else:
-                                    next_token_logits[b, tok] *= repetition_penalty
-
-                # Mask foreign scripts if provided
-                if script_mask is not None:
-                    next_token_logits.masked_fill_(script_mask, -1e4)
-
+                next_token_logits = self._apply_decoding_constraints(
+                    logits[:, -1, :],
+                    generated.tolist(),
+                    repetition_penalty,
+                    no_repeat_ngram_size,
+                    script_mask,
+                    bos
+                )
                 next_tokens = torch.argmax(next_token_logits, dim=-1, keepdim=True)
-
-                # Correctness fix: finished sequences are clamped to pad_idx
                 next_tokens = torch.where(
                     finished.unsqueeze(1),
                     torch.full_like(next_tokens, self.pad_idx),
                     next_tokens
                 )
-                finished = finished | (next_tokens.squeeze(-1) == self.eos_idx)
+                finished = finished | (next_tokens.squeeze(-1) == eos)
                 generated = torch.cat([generated, next_tokens], dim=-1)
+                step_input = next_tokens
 
                 if finished.all():
                     break
 
-            # Strip trailing padding tokens per sentence
             results = []
             for seq in generated.tolist():
                 clean_seq = []
                 for tok in seq:
                     clean_seq.append(tok)
-                    if tok == self.eos_idx:
+                    if tok == eos:
                         break
                 results.append(clean_seq)
             return results
         else:
-            # Beam Search with completed hypothesis separation and length normalization
             results = []
             for b in range(batch_size):
-                b_mem = memory[b:b+1]  # (1, src_len, d_model)
-                b_mask = src_mask[b:b+1]
-
-                beams = [(init_tokens, 0.0)]
-                completed: List[Tuple[List[int], float]] = []
-
-                for _ in range(max_len):
-                    all_candidates = []
-
-                    for seq, score in beams:
-                        input_tensor = torch.tensor([seq], dtype=torch.long, device=device)
-                        logits, _ = self.decode_step(
-                            input_tensor,
-                            memory=b_mem,
-                            memory_mask=b_mask,
-                            is_causal=True
-                        )
-                        next_logits = logits[0, -1, :].clone()
-
-                        # Repetition penalty
-                        if repetition_penalty != 1.0:
-                            for tok in set(seq):
-                                if tok not in (self.pad_idx, self.bos_idx):
-                                    if next_logits[tok] > 0:
-                                        next_logits[tok] /= repetition_penalty
-                                    else:
-                                        next_logits[tok] *= repetition_penalty
-
-                        # N-gram repetition blocking (prevents repeating loops like ", , ,")
-                        if no_repeat_ngram_size > 0 and len(seq) >= no_repeat_ngram_size - 1:
-                            ngram_prefix = tuple(seq[-(no_repeat_ngram_size - 1):])
-                            for i in range(len(seq) - no_repeat_ngram_size + 1):
-                                if tuple(seq[i : i + no_repeat_ngram_size - 1]) == ngram_prefix:
-                                    banned_tok = seq[i + no_repeat_ngram_size - 1]
-                                    next_logits[banned_tok] = -1e4
-
-                        if script_mask is not None:
-                            next_logits.masked_fill_(script_mask, -1e4)
-
-                        log_probs = F.log_softmax(next_logits, dim=-1)
-                        topk_probs, topk_tokens = torch.topk(log_probs, num_beams * 2)
-
-                        for lp, tok in zip(topk_probs.tolist(), topk_tokens.tolist()):
-                            new_seq = seq + [tok]
-                            new_score = score + lp
-                            if tok == self.eos_idx:
-                                completed.append((new_seq, new_score))
-                            else:
-                                all_candidates.append((new_seq, new_score))
-
-                    def score_fn(candidate):
-                        seq, score = candidate
-                        # Length penalty formula: ((5 + len) / 6) ^ alpha
-                        lp = ((5.0 + len(seq)) / 6.0) ** length_penalty if length_penalty > 0 else 1.0
-                        return score / lp
-
-                    # Robust early stopping: break only if completed candidates dominate active beams
-                    if len(completed) >= num_beams:
-                        best_active = max(score_fn(c) for c in all_candidates) if all_candidates else -float("inf")
-                        worst_completed = min(score_fn(c) for c in completed[:num_beams])
-                        if worst_completed >= best_active:
-                            break
-
-                    ordered = sorted(all_candidates, key=score_fn, reverse=True)
-                    beams = ordered[:num_beams]
-                    if not beams:
-                        break
-
-                # Combine completed hypotheses with any surviving beams
-                pool = completed if completed else beams
-                def final_score_fn(candidate):
-                    seq, score = candidate
-                    lp = ((5.0 + len(seq)) / 6.0) ** length_penalty if length_penalty > 0 else 1.0
-                    return score / lp
-
-                ordered_final = sorted(pool, key=final_score_fn, reverse=True)
-                best_seq = ordered_final[0][0]
-                results.append(best_seq)
-
+                beams = self._beam_search_single_kv(
+                    memory=memory[b:b+1],
+                    src_mask=src_mask[b:b+1],
+                    init_tokens=init_tokens,
+                    max_len=max_len,
+                    num_beams=num_beams,
+                    repetition_penalty=repetition_penalty,
+                    no_repeat_ngram_size=no_repeat_ngram_size,
+                    length_penalty=length_penalty,
+                    script_mask=script_mask,
+                    bos_idx=bos,
+                    eos_idx=eos
+                )
+                results.append(beams[0][0])
             return results
 
     @torch.no_grad()
@@ -493,26 +641,40 @@ class ModernSeq2SeqTransformer(nn.Module):
         max_len: int = 64,
         prefix_tokens: Optional[List[int]] = None,
         return_attention: bool = False,
-        repetition_penalty: float = 1.0,
+        repetition_penalty: float = 1.15,
         no_repeat_ngram_size: int = 2,
         disallowed_mask: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """Polymorphic greedy decoding wrapper matching classical Seq2SeqTransformer signature."""
-        prefix = [sos_idx] + (prefix_tokens or [])
-        res = self.generate(
+    ):
+        """Polymorphic greedy decoding wrapper matching classical Seq2SeqTransformer contract."""
+        seqs = self.generate(
             src=src,
             max_len=max_len,
             num_beams=1,
-            prefix_tokens=prefix,
-            return_attention=return_attention,
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
-            disallowed_mask=disallowed_mask
+            script_mask=disallowed_mask,
+            prefix_tokens=prefix_tokens,
+            bos_idx=sos_idx,
+            eos_idx=eos_idx
         )
+        device = self.shared_embedding.weight.device
+        max_out_len = max((len(s) for s in seqs), default=1)
+        out_tensor = torch.full((len(seqs), max_out_len), self.pad_idx, dtype=torch.long, device=device)
+        for i, s in enumerate(seqs):
+            if s:
+                out_tensor[i, :len(s)] = torch.tensor(s, dtype=torch.long, device=device)
+
         if return_attention:
-            tokens, attn = res
-            return tokens, attn
-        return res, None
+            src_dev = src.to(device)
+            src_mask = self.make_src_mask(src_dev)
+            memory, _ = self.encode(src_dev, src_mask=src_mask, return_attn=False)
+            _, cross_attns = self.decode_step(
+                out_tensor, memory=memory, memory_mask=src_mask, is_causal=True, return_cross_attn=True
+            )
+            last_attn = cross_attns[-1] if cross_attns else None
+            return out_tensor, last_attn
+
+        return out_tensor
 
     @torch.no_grad()
     def beam_search_decode(
@@ -520,28 +682,36 @@ class ModernSeq2SeqTransformer(nn.Module):
         src: torch.Tensor,
         beam_size: int = 3,
         max_len: int = 64,
+        length_penalty: float = 0.6,
         sos_idx: int = 2,
         eos_idx: int = 3,
         prefix_tokens: Optional[List[int]] = None,
         disallowed_mask: Optional[torch.Tensor] = None,
         no_repeat_ngram_size: int = 2,
-        repetition_penalty: float = 1.0
+        repetition_penalty: float = 1.15
     ) -> List[Tuple[torch.Tensor, float]]:
         """Polymorphic beam search decoding wrapper returning [(seq_tensor, score)] matching classical signature."""
-        prefix = [sos_idx] + (prefix_tokens or [])
-        res = self.generate(
-            src=src,
+        self.eval()
+        device = self.shared_embedding.weight.device
+        src_dev = src.to(device)
+        src_mask = self.make_src_mask(src_dev)
+        memory, _ = self.encode(src_dev, src_mask=src_mask, return_attn=False)
+        init_tokens = [sos_idx] + list(prefix_tokens) if prefix_tokens else [sos_idx]
+
+        beams = self._beam_search_single_kv(
+            memory=memory[0:1],
+            src_mask=src_mask[0:1],
+            init_tokens=init_tokens,
             max_len=max_len,
-            num_beams=beam_size,
-            prefix_tokens=prefix,
-            return_attention=False,
+            num_beams=max(1, int(beam_size)),
             repetition_penalty=repetition_penalty,
             no_repeat_ngram_size=no_repeat_ngram_size,
-            disallowed_mask=disallowed_mask
+            length_penalty=length_penalty,
+            script_mask=disallowed_mask,
+            bos_idx=sos_idx,
+            eos_idx=eos_idx
         )
-        out = []
-        for seq in res:
-            if seq.dim() == 1:
-                seq = seq.unsqueeze(0)
-            out.append((seq, 0.0))
-        return out
+        return [
+            (torch.tensor([seq], dtype=torch.long, device=device), float(score))
+            for seq, score in beams
+        ]

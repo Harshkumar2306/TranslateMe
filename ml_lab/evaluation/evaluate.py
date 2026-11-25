@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, Any, List
 
 from ml_lab.custom_transformer import Seq2SeqTransformer
+from ml_lab.custom_transformer.modern_transformer import ModernSeq2SeqTransformer, ModernTransformerConfig
 from ml_lab.tokenizer import MultilingualSubwordTokenizer
 from ml_lab.evaluation.metrics import compute_sacrebleu, compute_chrf, benchmark_translation_speed
 from ml_lab.datasets.curated_corpus import get_held_out_test_records
@@ -32,18 +33,46 @@ def load_custom_multilingual_model(
     if not os.path.exists(tok_path):
         tok_path = "ml_lab/tokenizer/multilingual_tokenizer.json"
     tokenizer = MultilingualSubwordTokenizer.load(tok_path)
-    cfg = ckpt["config"]
+    cfg = ckpt.get("config", {})
+    n_enc = cfg.get("num_encoder_layers", cfg.get("num_layers", 6))
+    n_dec = cfg.get("num_decoder_layers", cfg.get("num_layers", 6))
 
-    model = Seq2SeqTransformer(
-        src_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
-        tgt_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
-        d_model=cfg.get("d_model", 256),
-        n_heads=cfg.get("n_heads", 4),
-        num_encoder_layers=cfg.get("num_layers", 3),
-        num_decoder_layers=cfg.get("num_layers", 3),
-        d_ff=cfg.get("d_ff", 1024),
-        share_embeddings=True
-    ).to(device)
+    is_modern = (
+        cfg.get("use_rope", False)
+        or any("rope" in k for k in ckpt.get("model_state_dict", {}).keys())
+        or cfg.get("model_type") == "modern"
+    )
+    if is_modern:
+        modern_cfg = ModernTransformerConfig(
+            vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
+            d_model=cfg.get("d_model", 768),
+            n_heads=cfg.get("n_heads", 12),
+            num_encoder_layers=n_enc,
+            num_decoder_layers=n_dec,
+            d_ff=cfg.get("d_ff", 2048),
+            dropout=cfg.get("dropout", 0.1),
+            pad_idx=tokenizer.pad_id,
+            bos_idx=tokenizer.sos_id,
+            eos_idx=tokenizer.eos_id,
+            use_rope=cfg.get("use_rope", True),
+            use_qk_norm=cfg.get("use_qk_norm", True),
+            share_embeddings=cfg.get("share_embeddings", True),
+            use_layerscale=cfg.get("use_layerscale", True),
+            soft_cap=cfg.get("soft_cap", 30.0)
+        )
+        model = ModernSeq2SeqTransformer(modern_cfg).to(device)
+    else:
+        model = Seq2SeqTransformer(
+            src_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
+            tgt_vocab_size=cfg.get("vocab_size", tokenizer.vocab_size),
+            d_model=cfg.get("d_model", 256),
+            n_heads=cfg.get("n_heads", 4),
+            num_encoder_layers=n_enc,
+            num_decoder_layers=n_dec,
+            d_ff=cfg.get("d_ff", 1024),
+            share_embeddings=cfg.get("share_embeddings", True),
+            pre_ln=cfg.get("pre_ln", False)
+        ).to(device)
 
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()

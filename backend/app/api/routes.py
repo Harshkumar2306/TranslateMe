@@ -344,6 +344,38 @@ def get_deep_learning_lab_info():
 @router.get("/model/info", response_model=ModelInfoResponse)
 def get_model_specifications():
     """Returns technical specifications of our custom-trained Multilingual Transformer."""
+    from ml_lab.custom_transformer.modern_transformer import ModernSeq2SeqTransformer
+
+    if not custom_multilingual_engine.is_loaded:
+        custom_multilingual_engine.load_model()
+
+    if isinstance(custom_multilingual_engine.model, ModernSeq2SeqTransformer):
+        cfg = custom_multilingual_engine.model.config
+        n_params = custom_multilingual_engine.model.count_parameters()
+        return ModelInfoResponse(
+            model_name="TranslateMe 100M Modern Multilingual Transformer",
+            model_type="Modern Seq2Seq Transformer (RoPE + SwiGLU + RMSNorm + QK-Norm + LayerScale)",
+            num_parameters=f"{n_params:,} ({n_params / 1e6:.2f}M)",
+            parameters=f"{n_params:,} ({n_params / 1e6:.2f}M)",
+            layers=cfg.num_encoder_layers,
+            attention_heads=cfg.n_heads,
+            d_model=cfg.d_model,
+            d_ff=cfg.d_ff,
+            vocab_size=f"{cfg.vocab_size:,} subwords",
+            tokenizer_type="Byte-Pair Encoding (BPE) Multilingual Subword Tokenizer (ByteLevel)",
+            supported_languages_count=4,
+            framework="Pure PyTorch (Pre-LN RMSNorm, RoPE, SwiGLU, FlashAttention SDPA)",
+            device=str(custom_multilingual_engine.device),
+            license="MIT Open Source (Own Independent Implementation)",
+            attribution="Trained completely from scratch with PyTorch. No pretrained translation weights.",
+            limitations=[
+                "Trained on curated AI4Bharat Samanantar + OPUS 4-way multilingual corpus",
+                f"Vocabulary size is {cfg.vocab_size:,} subwords via custom ByteLevel BPE tokenizer",
+                "Context length supports dynamic RoPE extrapolation",
+                "Full 111.7M seq2seq Transformer trained on Dual Tesla T4 GPUs with AMP FP16"
+            ]
+        )
+
     return ModelInfoResponse(
         model_name="TranslateMe Custom Multilingual Transformer",
         model_type="Seq2Seq Transformer (Encoder-Decoder)",

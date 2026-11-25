@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-TranslateMe 100M Parameter Modern Transformer Multi-GPU Trainer
-Tailored for Kaggle Dual Nvidia Tesla T4 (2x16GB VRAM) / Single A100 / Dual GPU Cloud
+TranslateMe 100M Parameter SOTA Modern Transformer Multi-GPU Trainer
+Tailored for Kaggle Dual Nvidia Tesla T4 (2x16GB VRAM) / L4 / A100 Cloud GPUs
 
-100% Self-Contained:
-- Architecture: 111,723,264 Parameter Modern Transformer (Vaswani + RoPE + SwiGLU + RMSNorm + QK-Norm + Soft-Cap)
-- Tokenizer: 16,384 Vocab Multilingual Byte-Level BPE trained strictly on train partition
-- Dataset Ingestion: AI4Bharat Samanantar (1.6M clean pairs -> 3.2M bidirectional samples)
-- Hardware: Automatic Dual GPU (DataParallel) + PyTorch AMP FP16 + Real-Time ETA & Progress
+100% Self-Contained & State-Dict Compatible with `ml_lab/custom_transformer/modern_transformer.py`:
+- Architecture: ~111.7M ModernSeq2SeqTransformer (Pre-LN RMSNorm + RoPE + SwiGLU + QK-Norm + LayerScale + Soft-Cap)
+- FlashAttention SDPA: Pure causal SDPA without materialized O(N^2) causal mask overhead
+- Pre-Tokenized Rust BPE Cache + LengthBucketBatchSampler: Cuts padding waste from ~65% to <10% (2-3x faster!)
+- Optimization: Fused AdamW (with 1D norm/gamma/bias decay exemption), CosineWarmup or Noam LR, Z-loss, BF16/FP16 AMP
+- Persistence: Exact deterministic mid-epoch resume, atomic saves, lightweight best export, disk-budget cleanup
+- Verification: KV-cached live translation probes after every epoch
 """
 
 import os
@@ -15,22 +17,27 @@ import sys
 import math
 import time
 import json
+import signal
 import random
 import hashlib
 import unicodedata
 import re
 import urllib.request
 import ssl
-import io
 import argparse
 from pathlib import Path
-from typing import List, Tuple, Dict, Any, Optional, Iterable
+from typing import List, Tuple, Dict, Any, Optional, Iterable, Iterator
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Sampler
 from torch.amp import autocast, GradScaler
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 try:
     import pyarrow.parquet as pq
@@ -52,6 +59,7 @@ except ImportError:
 # ==============================================================================
 
 SPECIAL_TOKENS = ["<pad>", "<unk>", "<bos>", "<eos>", "<2en>", "<2hi>", "<2ta>", "<2te>"]
+
 
 def get_control_token(lang: str) -> str:
     return f"<2{lang.strip().lower()}>"
@@ -127,6 +135,10 @@ class MultilingualSubwordTokenizer:
             tokens = prefix + tokens + [self.eos_id]
         return tokens
 
+    def encode_batch_raw(self, texts: List[str]) -> List[List[int]]:
+        """Multi-threaded Rust batch encoding for blazing-fast dataset pre-tokenization."""
+        return [enc.ids for enc in self.tokenizer.encode_batch(texts)]
+
     def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> str:
         if skip_special_tokens:
             filtered = [
@@ -155,6 +167,7 @@ SAMANANTAR_SHARDS = {
     "ta": ["https://huggingface.co/datasets/ai4bharat/samanantar/resolve/main/ta/train-00000-of-00004.parquet"],
     "te": ["https://huggingface.co/datasets/ai4bharat/samanantar/resolve/main/te/train-00000-of-00003.parquet"]
 }
+
 
 def clean_text(text: str) -> str:
     if not isinstance(text, str):
@@ -281,7 +294,7 @@ def build_optimal_dataset(
     random.shuffle(val_data)
     random.shuffle(test_data)
 
-    print(f"\nPartitioning Finished (Record Isolation):")
+    print("\nPartitioning Finished (Record Isolation):")
     print(f"  Train: {len(train_data):,} samples | Val: {len(val_data):,} samples | Test: {len(test_data):,} samples")
 
     for name, data in [("train.jsonl", train_data), ("val.jsonl", val_data), ("test.jsonl", test_data)]:
@@ -293,7 +306,7 @@ def build_optimal_dataset(
 
 
 # ==============================================================================
-# 3. 100% CUSTOM MODERN TRANSFORMER ARCHITECTURE (111.72M PARAMETERS)
+# 3. 100% CUSTOM SOTA MODERN TRANSFORMER (EXACT STATE-DICT PARITY WITH CORE LIB)
 # ==============================================================================
 
 class RMSNorm(nn.Module):
@@ -302,250 +315,472 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
 
+    def _norm(self, x: torch.Tensor) -> torch.Tensor:
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        input_dtype = x.dtype
-        x_fp32 = x.float()
-        variance = x_fp32.pow(2).mean(-1, keepdim=True)
-        normed = x_fp32 * torch.rsqrt(variance + self.eps)
-        output = normed.to(input_dtype)
+        output = self._norm(x.float()).type_as(x)
         return output * self.weight.type_as(output)
 
 
+def precompute_freqs_cis(dim: int, max_seq_len: int = 4096, theta: float = 10000.0) -> Tuple[torch.Tensor, torch.Tensor]:
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(max_seq_len, dtype=torch.float)
+    freqs = torch.outer(t, freqs)
+    return torch.cos(freqs), torch.sin(freqs)
+
+
+def apply_rotary_emb(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, offset: int = 0) -> torch.Tensor:
+    seq_len = x.size(-2)
+    c = cos[offset : offset + seq_len, :].to(dtype=x.dtype, device=x.device).unsqueeze(0).unsqueeze(0)
+    s = sin[offset : offset + seq_len, :].to(dtype=x.dtype, device=x.device).unsqueeze(0).unsqueeze(0)
+    x1 = x[..., 0::2]
+    x2 = x[..., 1::2]
+    out1 = x1 * c - x2 * s
+    out2 = x1 * s + x2 * c
+    return torch.stack([out1, out2], dim=-1).flatten(-2)
+
+
 class RotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_seq_len: int = 2048, base: float = 10000.0):
+    def __init__(self, dim: int, max_seq_len: int = 4096, theta: float = 10000.0):
         super().__init__()
         self.dim = dim
         self.max_seq_len = max_seq_len
-        self.base = base
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self._build_cache(max_seq_len)
+        self.theta = theta
+        cos, sin = precompute_freqs_cis(dim, max_seq_len=max_seq_len, theta=theta)
+        self.register_buffer("cos", cos, persistent=False)
+        self.register_buffer("sin", sin, persistent=False)
 
-    def _build_cache(self, seq_len: int):
-        self.max_seq_len = seq_len
-        t = torch.arange(seq_len, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        self.register_buffer("cos_cached", emb.cos(), persistent=False)
-        self.register_buffer("sin_cached", emb.sin(), persistent=False)
-
-    def forward(self, x: torch.Tensor, seq_len: int, offset: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
-        if offset + seq_len > self.max_seq_len:
-            self._build_cache(max(offset + seq_len, self.max_seq_len * 2))
-        return (
-            self.cos_cached[offset:offset + seq_len].unsqueeze(0).unsqueeze(2),
-            self.sin_cached[offset:offset + seq_len].unsqueeze(0).unsqueeze(2)
-        )
-
-
-def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-    x1 = x[..., :x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    return (x * cos.type_as(x)) + (_rotate_half(x) * sin.type_as(x))
+    def forward(self, q: torch.Tensor, k: torch.Tensor, offset: int = 0) -> Tuple[torch.Tensor, torch.Tensor]:
+        needed_len = offset + max(q.size(-2), k.size(-2))
+        if needed_len > self.max_seq_len:
+            new_max = max(needed_len, self.max_seq_len * 2)
+            new_cos, new_sin = precompute_freqs_cis(self.dim, max_seq_len=new_max, theta=self.theta)
+            self.cos = new_cos.to(device=self.cos.device, dtype=self.cos.dtype)
+            self.sin = new_sin.to(device=self.sin.device, dtype=self.sin.dtype)
+            self.max_seq_len = new_max
+        return apply_rotary_emb(q, self.cos, self.sin, offset=offset), apply_rotary_emb(k, self.cos, self.sin, offset=offset)
 
 
 class SwiGLU(nn.Module):
-    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+    def __init__(self, d_model: int, d_ff: Optional[int] = None, dropout: float = 0.0, bias: bool = False):
         super().__init__()
-        self.w_gate = nn.Linear(d_model, d_ff, bias=False)
-        self.w_up = nn.Linear(d_model, d_ff, bias=False)
-        self.w_down = nn.Linear(d_ff, d_model, bias=False)
-        self.dropout = nn.Dropout(dropout)
+        if d_ff is None:
+            raw_dff = int(2 * (4 * d_model) / 3)
+            d_ff = ((raw_dff + 63) // 64) * 64
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.w_gate = nn.Linear(d_model, d_ff, bias=bias)
+        self.w_up = nn.Linear(d_model, d_ff, bias=bias)
+        self.w_down = nn.Linear(d_ff, d_model, bias=bias)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.dropout(self.w_down(F.silu(self.w_gate(x)) * self.w_up(x)))
+        hidden = F.silu(self.w_gate(x)) * self.w_up(x)
+        return self.w_down(self.dropout(hidden))
 
 
-class ModernAttention(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, dropout: float = 0.1, is_causal: bool = False, use_rope: bool = True):
+class ModernMultiHeadAttention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        dropout: float = 0.0,
+        bias: bool = False,
+        use_qk_norm: bool = True,
+        use_rope: bool = False,
+        rope_max_seq_len: int = 4096
+    ):
         super().__init__()
         assert d_model % n_heads == 0
         self.d_model = d_model
         self.n_heads = n_heads
-        self.head_dim = d_model // n_heads
-        self.is_causal = is_causal
+        self.d_k = d_model // n_heads
+        self.dropout_p = dropout
+        self.use_qk_norm = use_qk_norm
         self.use_rope = use_rope
 
-        self.q_proj = nn.Linear(d_model, d_model, bias=False)
-        self.k_proj = nn.Linear(d_model, d_model, bias=False)
-        self.v_proj = nn.Linear(d_model, d_model, bias=False)
-        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        self.w_q = nn.Linear(d_model, d_model, bias=bias)
+        self.w_k = nn.Linear(d_model, d_model, bias=bias)
+        self.w_v = nn.Linear(d_model, d_model, bias=bias)
+        self.w_o = nn.Linear(d_model, d_model, bias=bias)
 
-        self.q_norm = RMSNorm(self.head_dim)
-        self.k_norm = RMSNorm(self.head_dim)
-        self.dropout = dropout
+        self.q_norm = RMSNorm(self.d_k) if use_qk_norm else nn.Identity()
+        self.k_norm = RMSNorm(self.d_k) if use_qk_norm else nn.Identity()
+        self.rope = RotaryEmbedding(dim=self.d_k, max_seq_len=rope_max_seq_len) if use_rope else None
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+    def forward_cached(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        is_causal: bool = False,
+        offset: int = 0,
+        past_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        is_cross_attn: bool = False
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        B, Sq, _ = q.shape
+        q_proj = self.w_q(q).view(B, Sq, self.n_heads, self.d_k).transpose(1, 2)
+        if self.use_qk_norm:
+            q_proj = self.q_norm(q_proj)
+
+        if is_cross_attn and past_kv is not None:
+            k_proj, v_proj = past_kv
+            if self.use_rope and self.rope is not None:
+                q_proj, _ = self.rope(q_proj, q_proj, offset=offset)
+        else:
+            Sk = k.size(1)
+            k_proj = self.w_k(k).view(B, Sk, self.n_heads, self.d_k).transpose(1, 2)
+            v_proj = self.w_v(v).view(B, Sk, self.n_heads, self.d_k).transpose(1, 2)
+            if self.use_qk_norm:
+                k_proj = self.k_norm(k_proj)
+            if self.use_rope and self.rope is not None:
+                q_proj, k_proj = self.rope(q_proj, k_proj, offset=offset)
+            if past_kv is not None and not is_cross_attn:
+                k_proj = torch.cat([past_kv[0], k_proj], dim=-2)
+                v_proj = torch.cat([past_kv[1], v_proj], dim=-2)
+
+        present_kv = (k_proj, v_proj)
+        Sk_total = k_proj.size(-2)
+        attn_dropout = self.dropout_p if self.training else 0.0
+
+        sdpa_mask = mask.unsqueeze(1) if (mask is not None and mask.dim() == 3) else mask
+        if is_causal:
+            if past_kv is not None and Sq == 1 and sdpa_mask is None:
+                out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, attn_mask=None, dropout_p=attn_dropout, is_causal=False)
+            elif sdpa_mask is None and past_kv is None and Sq == Sk_total:
+                out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, attn_mask=None, dropout_p=attn_dropout, is_causal=True)
+            else:
+                causal_bool = torch.ones((Sq, Sk_total), dtype=torch.bool, device=q.device).tril(diagonal=Sk_total - Sq).unsqueeze(0).unsqueeze(0)
+                combined = (sdpa_mask & causal_bool) if (sdpa_mask is not None and sdpa_mask.dtype == torch.bool) else causal_bool
+                out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, attn_mask=combined, dropout_p=attn_dropout, is_causal=False)
+        else:
+            out = F.scaled_dot_product_attention(q_proj, k_proj, v_proj, attn_mask=sdpa_mask, dropout_p=attn_dropout, is_causal=False)
+
+        out = out.transpose(1, 2).contiguous().view(B, Sq, self.d_model)
+        return self.w_o(out), present_kv
 
     def forward(
         self,
-        q_in: torch.Tensor,
-        kv_in: torch.Tensor,
-        rope_emb: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        attn_mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        B, Sq, _ = q_in.shape
-        _, Sk, _ = kv_in.shape
-
-        q = self.q_proj(q_in).view(B, Sq, self.n_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(kv_in).view(B, Sk, self.n_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(kv_in).view(B, Sk, self.n_heads, self.head_dim).transpose(1, 2)
-
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-
-        if self.use_rope and rope_emb is not None:
-            cos, sin = rope_emb
-            q = apply_rope(q.transpose(1, 2), cos, sin).transpose(1, 2)
-            k = apply_rope(k.transpose(1, 2), cos, sin).transpose(1, 2)
-
-        out = F.scaled_dot_product_attention(
-            q, k, v,
-            attn_mask=attn_mask,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=self.is_causal and (attn_mask is None) and (Sq == Sk)
-        )
-
-        out = out.transpose(1, 2).contiguous().view(B, Sq, self.d_model)
-        return self.out_proj(out)
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+        is_causal: bool = False
+    ) -> Tuple[torch.Tensor, None]:
+        out, _ = self.forward_cached(q, k, v, mask=mask, is_causal=is_causal)
+        return out, None
 
 
 class ModernEncoderLayer(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        dropout: float = 0.1,
+        use_qk_norm: bool = True,
+        use_rope: bool = True,
+        use_layerscale: bool = True,
+        layerscale_init: float = 0.1
+    ):
         super().__init__()
         self.norm1 = RMSNorm(d_model)
-        self.self_attn = ModernAttention(d_model, n_heads, dropout=dropout, is_causal=False, use_rope=True)
+        self.self_attn = ModernMultiHeadAttention(d_model, n_heads, dropout=dropout, use_qk_norm=use_qk_norm, use_rope=use_rope)
         self.norm2 = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout=dropout)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.use_layerscale = use_layerscale
+        if use_layerscale:
+            self.gamma_1 = nn.Parameter(torch.ones(d_model) * layerscale_init)
+            self.gamma_2 = nn.Parameter(torch.ones(d_model) * layerscale_init)
+        else:
+            self.gamma_1 = 1.0
+            self.gamma_2 = 1.0
 
-    def forward(self, x: torch.Tensor, rope_emb: Tuple[torch.Tensor, torch.Tensor], mask: Optional[torch.Tensor] = None) -> torch.Tensor:
-        x = x + self.self_attn(self.norm1(x), self.norm1(x), rope_emb=rope_emb, attn_mask=mask)
-        x = x + self.ffn(self.norm2(x))
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        norm_x = self.norm1(x)
+        attn_out, _ = self.self_attn(norm_x, norm_x, norm_x, mask=mask, is_causal=False)
+        x = x + self.dropout(self.gamma_1 * attn_out)
+        x = x + self.dropout(self.gamma_2 * self.ffn(self.norm2(x)))
         return x
 
 
 class ModernDecoderLayer(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, dropout: float = 0.1):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        dropout: float = 0.1,
+        use_qk_norm: bool = True,
+        use_rope: bool = True,
+        use_layerscale: bool = True,
+        layerscale_init: float = 0.1
+    ):
         super().__init__()
         self.norm1 = RMSNorm(d_model)
-        self.self_attn = ModernAttention(d_model, n_heads, dropout=dropout, is_causal=True, use_rope=True)
+        self.self_attn = ModernMultiHeadAttention(d_model, n_heads, dropout=dropout, use_qk_norm=use_qk_norm, use_rope=use_rope)
         self.norm2 = RMSNorm(d_model)
-        self.cross_attn = ModernAttention(d_model, n_heads, dropout=dropout, is_causal=False, use_rope=False)
+        self.cross_attn = ModernMultiHeadAttention(d_model, n_heads, dropout=dropout, use_qk_norm=use_qk_norm, use_rope=False)
         self.norm3 = RMSNorm(d_model)
         self.ffn = SwiGLU(d_model, d_ff, dropout=dropout)
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+        self.use_layerscale = use_layerscale
+        if use_layerscale:
+            self.gamma_1 = nn.Parameter(torch.ones(d_model) * layerscale_init)
+            self.gamma_2 = nn.Parameter(torch.ones(d_model) * layerscale_init)
+            self.gamma_3 = nn.Parameter(torch.ones(d_model) * layerscale_init)
+        else:
+            self.gamma_1 = 1.0
+            self.gamma_2 = 1.0
+            self.gamma_3 = 1.0
+
+    def forward_cached(
+        self,
+        x: torch.Tensor,
+        memory: torch.Tensor,
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = True,
+        offset: int = 0,
+        past_kv: Optional[Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]] = None
+    ) -> Tuple[torch.Tensor, Tuple[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]]:
+        self_past, cross_past = past_kv if past_kv is not None else (None, None)
+
+        norm_x = self.norm1(x)
+        self_out, new_self = self.self_attn.forward_cached(
+            norm_x, norm_x, norm_x, mask=tgt_mask, is_causal=is_causal, offset=offset, past_kv=self_past, is_cross_attn=False
+        )
+        x = x + self.dropout(self.gamma_1 * self_out)
+
+        norm_x = self.norm2(x)
+        cross_out, new_cross = self.cross_attn.forward_cached(
+            norm_x, memory, memory, mask=memory_mask, is_causal=False, offset=0, past_kv=cross_past, is_cross_attn=True
+        )
+        x = x + self.dropout(self.gamma_2 * cross_out)
+
+        x = x + self.dropout(self.gamma_3 * self.ffn(self.norm3(x)))
+        return x, (new_self, new_cross)
 
     def forward(
         self,
         x: torch.Tensor,
         memory: torch.Tensor,
-        rope_emb: Tuple[torch.Tensor, torch.Tensor],
-        causal_mask: Optional[torch.Tensor] = None,
-        memory_mask: Optional[torch.Tensor] = None
+        tgt_mask: Optional[torch.Tensor] = None,
+        memory_mask: Optional[torch.Tensor] = None,
+        is_causal: bool = True
     ) -> torch.Tensor:
-        x = x + self.self_attn(self.norm1(x), self.norm1(x), rope_emb=rope_emb, attn_mask=causal_mask)
-        x = x + self.cross_attn(self.norm2(x), memory, rope_emb=None, attn_mask=memory_mask)
-        x = x + self.ffn(self.norm3(x))
-        return x
+        out, _ = self.forward_cached(x, memory, tgt_mask=tgt_mask, memory_mask=memory_mask, is_causal=is_causal)
+        return out
 
 
-class Modern100MTransformer(nn.Module):
+class ModernSeq2SeqTransformer(nn.Module):
     """
-    111.72M Parameter Modern Transformer.
-    6 Encoder layers, 6 Decoder layers, d_model=768, n_heads=12, d_ff=2048 (SwiGLU).
-    Shared tied embeddings for cross-lingual multilingual alignment.
+    111.7M Parameter SOTA Multilingual Transformer.
+    Identical module tree and parameter naming to `ml_lab/custom_transformer/modern_transformer.py`
+    so checkpoints load directly into the backend inference service with strict=True.
     """
     def __init__(
         self,
         vocab_size: int = 16384,
         d_model: int = 768,
         n_heads: int = 12,
-        num_layers: int = 6,
+        num_encoder_layers: int = 6,
+        num_decoder_layers: int = 6,
         d_ff: int = 2048,
         dropout: float = 0.1,
         pad_idx: int = 0,
         bos_idx: int = 2,
         eos_idx: int = 3,
+        use_qk_norm: bool = True,
+        use_rope: bool = True,
+        share_embeddings: bool = True,
+        use_layerscale: bool = True,
+        layerscale_init: float = 0.1,
         soft_cap: float = 30.0
     ):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
+        self.n_heads = n_heads
+        self.num_encoder_layers = num_encoder_layers
+        self.num_decoder_layers = num_decoder_layers
+        self.d_ff = d_ff
+        self.dropout_rate = dropout
         self.pad_idx = pad_idx
         self.bos_idx = bos_idx
         self.eos_idx = eos_idx
+        self.use_qk_norm = use_qk_norm
+        self.use_rope = use_rope
+        self.share_embeddings = share_embeddings
+        self.use_layerscale = use_layerscale
+        self.layerscale_init = layerscale_init
         self.soft_cap = soft_cap
 
-        self.shared_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
-        self.emb_scale = math.sqrt(d_model)
-
-        self.rope = RotaryEmbedding(dim=d_model // n_heads, max_seq_len=2048)
+        self.shared_embedding = nn.Embedding(vocab_size, d_model, padding_idx=pad_idx)
+        self.emb_dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
 
         self.encoder_layers = nn.ModuleList([
-            ModernEncoderLayer(d_model, n_heads, d_ff, dropout) for _ in range(num_layers)
+            ModernEncoderLayer(
+                d_model=d_model, n_heads=n_heads, d_ff=d_ff, dropout=dropout,
+                use_qk_norm=use_qk_norm, use_rope=use_rope,
+                use_layerscale=use_layerscale, layerscale_init=layerscale_init
+            )
+            for _ in range(num_encoder_layers)
         ])
-        self.encoder_norm = RMSNorm(d_model)
+        self.encoder_final_norm = RMSNorm(d_model)
 
         self.decoder_layers = nn.ModuleList([
-            ModernDecoderLayer(d_model, n_heads, d_ff, dropout) for _ in range(num_layers)
+            ModernDecoderLayer(
+                d_model=d_model, n_heads=n_heads, d_ff=d_ff, dropout=dropout,
+                use_qk_norm=use_qk_norm, use_rope=use_rope,
+                use_layerscale=use_layerscale, layerscale_init=layerscale_init
+            )
+            for _ in range(num_decoder_layers)
         ])
-        self.decoder_norm = RMSNorm(d_model)
+        self.decoder_final_norm = RMSNorm(d_model)
 
-        self.output_proj = nn.Linear(d_model, vocab_size, bias=False)
-        self.output_proj.weight = self.shared_emb.weight
+        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
+        if share_embeddings:
+            self.lm_head.weight = self.shared_embedding.weight
 
-        self._reset_parameters()
+        self._init_weights()
 
-    def _reset_parameters(self):
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+    def _init_weights(self):
+        total_depth = max(1, self.num_encoder_layers + self.num_decoder_layers)
+        residual_scale = 1.0 / math.sqrt(2.0 * total_depth)
+        for name, module in self.named_modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if name.endswith(("w_o", "w_down")):
+                    module.weight.data.mul_(residual_scale)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, mean=0.0, std=1.0 / math.sqrt(self.d_model))
+                if module.padding_idx is not None:
+                    module.weight.data[module.padding_idx].zero_()
+        if self.share_embeddings:
+            self.lm_head.weight = self.shared_embedding.weight
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
-    def make_padding_mask(self, x: torch.Tensor) -> torch.Tensor:
-        return (x != self.pad_idx).unsqueeze(1).unsqueeze(2)
+    def make_src_mask(self, src: torch.Tensor) -> torch.Tensor:
+        return (src != self.pad_idx).unsqueeze(1)
 
-    def make_causal_mask(self, S: int, device: torch.device) -> torch.Tensor:
-        return torch.tril(torch.ones(S, S, device=device, dtype=torch.bool)).unsqueeze(0).unsqueeze(0)
-
-    def encode(self, src: torch.Tensor) -> torch.Tensor:
-        B, S = src.shape
-        rope_emb = self.rope(src, seq_len=S)
-        mask = self.make_padding_mask(src)
-        x = self.shared_emb(src) * self.emb_scale
+    def encode(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if src_mask is None:
+            src_mask = self.make_src_mask(src)
+        x = self.emb_dropout(self.shared_embedding(src) * math.sqrt(self.d_model))
         for layer in self.encoder_layers:
-            x = layer(x, rope_emb=rope_emb, mask=mask)
-        return self.encoder_norm(x)
+            x = layer(x, mask=src_mask)
+        return self.encoder_final_norm(x)
 
     def forward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        B, S_tgt = tgt.shape
-        memory = self.encode(src)
+        src_mask = self.make_src_mask(src)
+        memory = self.encode(src, src_mask=src_mask)
 
-        rope_emb = self.rope(tgt, seq_len=S_tgt)
-        tgt_pad_mask = self.make_padding_mask(tgt)
-        causal_mask = self.make_causal_mask(S_tgt, tgt.device)
-        combined_tgt_mask = tgt_pad_mask & causal_mask
-
-        src_mask = self.make_padding_mask(src)
-
-        x = self.shared_emb(tgt) * self.emb_scale
+        x = self.emb_dropout(self.shared_embedding(tgt) * math.sqrt(self.d_model))
         for layer in self.decoder_layers:
-            x = layer(x, memory=memory, rope_emb=rope_emb, causal_mask=combined_tgt_mask, memory_mask=src_mask)
+            # tgt_mask=None + is_causal=True triggers pure FlashAttention / Memory-Efficient SDPA
+            x = layer(x, memory=memory, tgt_mask=None, memory_mask=src_mask, is_causal=True)
 
-        x = self.decoder_norm(x)
-        logits = self.output_proj(x)
-        if self.soft_cap > 0:
-            logits = torch.tanh(logits / self.soft_cap) * self.soft_cap
-
+        x = self.decoder_final_norm(x)
+        logits = self.lm_head(x)
+        if self.soft_cap and self.soft_cap > 0:
+            logits = self.soft_cap * torch.tanh(logits / self.soft_cap)
         return logits.contiguous()
 
+    @torch.no_grad()
+    def greedy_generate(self, src: torch.Tensor, prefix_tokens: Optional[List[int]] = None, max_len: int = 64) -> List[int]:
+        """Fast KV-cached greedy generator for live training probes."""
+        self.eval()
+        device = self.shared_embedding.weight.device
+        src = src.to(device)
+        src_mask = self.make_src_mask(src)
+        memory = self.encode(src, src_mask=src_mask)
+
+        init_tokens = [self.bos_idx] + (prefix_tokens or [])
+        generated = list(init_tokens)
+        step_input = torch.tensor([init_tokens], dtype=torch.long, device=device)
+        past_kvs = None
+
+        for _ in range(max_len):
+            offset = past_kvs[0][0][0].size(-2) if past_kvs is not None else 0
+            x = self.shared_embedding(step_input) * math.sqrt(self.d_model)
+            new_kvs = []
+            for idx, layer in enumerate(self.decoder_layers):
+                x, kv = layer.forward_cached(
+                    x, memory=memory, tgt_mask=None, memory_mask=src_mask,
+                    is_causal=True, offset=offset, past_kv=(past_kvs[idx] if past_kvs else None)
+                )
+                new_kvs.append(kv)
+            past_kvs = new_kvs
+
+            logits = self.lm_head(self.decoder_final_norm(x))[:, -1, :]
+            if self.soft_cap and self.soft_cap > 0:
+                logits = self.soft_cap * torch.tanh(logits / self.soft_cap)
+            next_tok = int(torch.argmax(logits, dim=-1).item())
+            generated.append(next_tok)
+            if next_tok == self.eos_idx:
+                break
+            step_input = torch.tensor([[next_tok]], dtype=torch.long, device=device)
+
+        self.train()
+        return generated
+
 
 # ==============================================================================
-# 4. NOAM SCHEDULER & PYTORCH DATALOADERS
+# 4. PRE-TOKENIZED DATASET + LENGTH-BUCKETED SAMPLER + SCHEDULERS
 # ==============================================================================
+
+def get_preferred_amp_dtype(device: torch.device) -> Tuple[torch.dtype, bool]:
+    if device.type != "cuda" or not torch.cuda.is_available():
+        return torch.float32, False
+    major, _ = torch.cuda.get_device_capability(device)
+    if major >= 8 and torch.cuda.is_bf16_supported():
+        return torch.bfloat16, False
+    return torch.float16, True
+
+
+class CosineWarmupScheduler:
+    """Linear warmup + Cosine annealing LR decay down to min_lr_ratio * peak_lr."""
+    def __init__(self, optimizer: torch.optim.Optimizer, warmup_steps: int, total_steps: int, peak_lr: float = 5e-4, min_lr_ratio: float = 0.05):
+        self.optimizer = optimizer
+        self.warmup_steps = max(1, warmup_steps)
+        self.total_steps = max(self.warmup_steps + 1, total_steps)
+        self.peak_lr = peak_lr
+        self.min_lr_ratio = min_lr_ratio
+        self.step_num = 0
+
+    def step(self) -> float:
+        self.step_num += 1
+        if self.step_num <= self.warmup_steps:
+            lr = self.peak_lr * (self.step_num / self.warmup_steps)
+        else:
+            progress = min(1.0, (self.step_num - self.warmup_steps) / max(1, self.total_steps - self.warmup_steps))
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            lr = self.peak_lr * (self.min_lr_ratio + (1.0 - self.min_lr_ratio) * cosine)
+        for g in self.optimizer.param_groups:
+            g["lr"] = lr
+        return lr
+
+    def state_dict(self):
+        return {
+            "step_num": self.step_num,
+            "warmup_steps": self.warmup_steps,
+            "total_steps": self.total_steps,
+            "peak_lr": self.peak_lr,
+            "min_lr_ratio": self.min_lr_ratio
+        }
+
+    def load_state_dict(self, state):
+        self.step_num = state["step_num"]
+
 
 class NoamScheduler:
     def __init__(self, optimizer: torch.optim.Optimizer, d_model: int = 768, warmup_steps: int = 4000, factor: float = 1.0):
@@ -572,53 +807,192 @@ class NoamScheduler:
         self.step_num = state["step_num"]
 
 
-class JsonlNMTDataset(Dataset):
-    def __init__(self, file_path: str, max_samples: Optional[int] = None):
-        self.samples = []
-        with open(file_path, "r", encoding="utf-8") as f:
+class PreTokenizedNMTDataset(Dataset):
+    """
+    Loads parallel JSONL once, batch-tokenizes via Rust HuggingFace tokenizer (~10s for 2.88M rows),
+    caches compact packed int16/int32 tensors to disk, and serves zero-CPU-overhead samples.
+    """
+    def __init__(
+        self,
+        jsonl_path: str,
+        tokenizer: MultilingualSubwordTokenizer,
+        max_len: int = 128,
+        cache_path: Optional[str] = None,
+        max_samples: Optional[int] = None
+    ):
+        self.bos_id = tokenizer.bos_id
+        self.eos_id = tokenizer.eos_id
+        self.pad_id = tokenizer.pad_id
+        self.max_len = max_len
+        self.tok_dtype = torch.int16 if tokenizer.vocab_size <= 32767 else torch.int32
+
+        if cache_path and os.path.exists(cache_path) and max_samples is None:
+            print(f"  [CACHE HIT] Loading pre-tokenized dataset from {Path(cache_path).name}...")
+            cached = torch.load(cache_path, map_location="cpu", weights_only=False)
+            self.src_data = cached["src_data"]
+            self.src_offsets = cached["src_offsets"]
+            self.tgt_data = cached["tgt_data"]
+            self.tgt_offsets = cached["tgt_offsets"]
+            self.lengths = cached["lengths"]
+            return
+
+        t0 = time.time()
+        print(f"  [PRE-TOKENIZE] Reading & batch-tokenizing {Path(jsonl_path).name}...")
+        sources: List[str] = []
+        targets: List[str] = []
+        ctrl_ids: List[int] = []
+        ctrl_cache = {lang: tokenizer.get_control_token_id(lang) for lang in ["en", "hi", "ta", "te"]}
+
+        with open(jsonl_path, "r", encoding="utf-8") as f:
             for idx, line in enumerate(f):
                 if max_samples and idx >= max_samples:
                     break
                 d = json.loads(line)
-                self.samples.append((d["source"], d["target"], d["target_lang"]))
+                sources.append(d["source"].strip())
+                targets.append(d["target"].strip())
+                tlang = d["target_lang"]
+                if tlang not in ctrl_cache:
+                    ctrl_cache[tlang] = tokenizer.get_control_token_id(tlang)
+                ctrl_ids.append(ctrl_cache[tlang])
 
-    def __len__(self):
-        return len(self.samples)
+        n = len(sources)
+        src_flat: List[int] = []
+        tgt_flat: List[int] = []
+        src_off = [0]
+        tgt_off = [0]
+        lengths: List[int] = []
 
-    def __getitem__(self, idx: int):
-        return self.samples[idx]
+        chunk_size = 50000
+        for start in range(0, n, chunk_size):
+            end = min(n, start + chunk_size)
+            src_enc = tokenizer.encode_batch_raw(sources[start:end])
+            tgt_enc = tokenizer.encode_batch_raw(targets[start:end])
+
+            for i, (s_ids, t_ids) in enumerate(zip(src_enc, tgt_enc)):
+                s_seq = [self.bos_id] + s_ids + [self.eos_id]
+                if len(s_seq) > max_len:
+                    s_seq = s_seq[:max_len - 1] + [self.eos_id]
+
+                c_id = ctrl_ids[start + i]
+                t_seq = [self.bos_id, c_id] + t_ids + [self.eos_id]
+                if len(t_seq) > max_len:
+                    t_seq = t_seq[:max_len - 1] + [self.eos_id]
+
+                src_flat.extend(s_seq)
+                tgt_flat.extend(t_seq)
+                src_off.append(len(src_flat))
+                tgt_off.append(len(tgt_flat))
+                lengths.append(len(s_seq) + len(t_seq))
+
+        self.src_data = torch.tensor(src_flat, dtype=self.tok_dtype)
+        self.src_offsets = torch.tensor(src_off, dtype=torch.int64)
+        self.tgt_data = torch.tensor(tgt_flat, dtype=self.tok_dtype)
+        self.tgt_offsets = torch.tensor(tgt_off, dtype=torch.int64)
+        self.lengths = lengths
+
+        print(f"  [PRE-TOKENIZE] Tokenized {n:,} pairs in {time.time() - t0:.1f}s.")
+        if cache_path and max_samples is None:
+            tmp_cache = f"{cache_path}.tmp"
+            torch.save({
+                "src_data": self.src_data,
+                "src_offsets": self.src_offsets,
+                "tgt_data": self.tgt_data,
+                "tgt_offsets": self.tgt_offsets,
+                "lengths": self.lengths,
+            }, tmp_cache)
+            os.replace(tmp_cache, cache_path)
+            print(f"  [CACHE SAVED] Stored compact tensor cache: {Path(cache_path).name}")
+
+    def __len__(self) -> int:
+        return len(self.lengths)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        s0, s1 = int(self.src_offsets[idx]), int(self.src_offsets[idx + 1])
+        t0, t1 = int(self.tgt_offsets[idx]), int(self.tgt_offsets[idx + 1])
+        return self.src_data[s0:s1].long(), self.tgt_data[t0:t1].long()
 
 
-def build_nmt_collate_fn(tokenizer: MultilingualSubwordTokenizer, max_len: int = 128):
-    def collate_fn(batch):
-        src_batch = []
-        tgt_in_batch = []
-        tgt_out_batch = []
+class LengthBucketBatchSampler(Sampler[List[int]]):
+    """Groups similar-length pairs into mini-batches to minimize padding waste (2-3x speedup)."""
+    def __init__(self, lengths: List[int], batch_size: int, seed: int = 42, mega_batch_mult: int = 40):
+        self.lengths = lengths
+        self.batch_size = batch_size
+        self.seed = seed
+        self.mega_batch_mult = mega_batch_mult
+        self.epoch = 0
 
-        for src_text, tgt_text, tgt_lang in batch:
-            src_tokens = tokenizer.encode(src_text, add_special_tokens=True)
-            tgt_tokens = tokenizer.encode(tgt_text, add_special_tokens=True, target_lang=tgt_lang)
+    def set_epoch(self, epoch: int):
+        self.epoch = epoch
 
-            if len(src_tokens) > max_len:
-                src_tokens = src_tokens[:max_len - 1] + [tokenizer.eos_id]
-            if len(tgt_tokens) > max_len:
-                tgt_tokens = tgt_tokens[:max_len - 1] + [tokenizer.eos_id]
+    def __len__(self) -> int:
+        return (len(self.lengths) + self.batch_size - 1) // self.batch_size
 
-            src_batch.append(torch.tensor(src_tokens, dtype=torch.long))
-            tgt_in_batch.append(torch.tensor(tgt_tokens[:-1], dtype=torch.long))
-            tgt_out_batch.append(torch.tensor(tgt_tokens[1:], dtype=torch.long))
+    def __iter__(self) -> Iterator[List[int]]:
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        indices = torch.randperm(len(self.lengths), generator=g).tolist()
 
-        pad_id = tokenizer.pad_id
-        src_padded = nn.utils.rnn.pad_sequence(src_batch, batch_first=True, padding_value=pad_id)
-        tgt_in_padded = nn.utils.rnn.pad_sequence(tgt_in_batch, batch_first=True, padding_value=pad_id)
-        tgt_out_padded = nn.utils.rnn.pad_sequence(tgt_out_batch, batch_first=True, padding_value=pad_id)
+        mega_size = self.batch_size * self.mega_batch_mult
+        batches: List[List[int]] = []
+        for i in range(0, len(indices), mega_size):
+            chunk = indices[i:i + mega_size]
+            chunk.sort(key=lambda idx: self.lengths[idx])
+            for j in range(0, len(chunk), self.batch_size):
+                batches.append(chunk[j:j + self.batch_size])
 
-        return {"src": src_padded, "tgt_in": tgt_in_padded, "tgt_out": tgt_out_padded}
+        batch_perm = torch.randperm(len(batches), generator=g).tolist()
+        for b_idx in batch_perm:
+            yield batches[b_idx]
+
+
+def build_tensor_collate_fn(pad_id: int = 0):
+    def collate_fn(batch: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        src_list = [b[0] for b in batch]
+        tgt_in_list = [b[1][:-1] for b in batch]
+        tgt_out_list = [b[1][1:] for b in batch]
+        return {
+            "src": nn.utils.rnn.pad_sequence(src_list, batch_first=True, padding_value=pad_id),
+            "tgt_in": nn.utils.rnn.pad_sequence(tgt_in_list, batch_first=True, padding_value=pad_id),
+            "tgt_out": nn.utils.rnn.pad_sequence(tgt_out_list, batch_first=True, padding_value=pad_id),
+        }
     return collate_fn
 
 
+def configure_adamw_optimizer(
+    model: nn.Module,
+    lr: float = 5e-4,
+    weight_decay: float = 0.01,
+    betas: Tuple[float, float] = (0.9, 0.98),
+    eps: float = 1e-8
+) -> torch.optim.AdamW:
+    """Applies weight decay to 2D matrices only; exempts 1D norms, biases, and LayerScale gammas."""
+    decay_params = []
+    no_decay_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.dim() < 2 or "norm" in name.lower() or "bias" in name.lower() or "gamma" in name.lower():
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    optim_groups = [
+        {"params": decay_params, "weight_decay": weight_decay},
+        {"params": no_decay_params, "weight_decay": 0.0}
+    ]
+    use_fused = (
+        decay_params
+        and decay_params[0].device.type == "cuda"
+        and "fused" in torch.optim.AdamW.__init__.__code__.co_varnames
+    )
+    kwargs: Dict[str, Any] = {"lr": lr, "betas": betas, "eps": eps}
+    if use_fused:
+        kwargs["fused"] = True
+    return torch.optim.AdamW(optim_groups, **kwargs)
+
+
 # ==============================================================================
-# 5. MULTI-GPU RESUMABLE TRAINER WITH REAL-TIME ETA
+# 5. MULTI-GPU RESUMABLE TRAINER WITH REAL-TIME ETA & DIAGNOSTICS
 # ==============================================================================
 
 def format_duration(seconds: float) -> str:
@@ -636,14 +1010,17 @@ def format_duration(seconds: float) -> str:
 class Kaggle100MTrainer:
     def __init__(
         self,
-        model: Modern100MTransformer,
+        model: ModernSeq2SeqTransformer,
         optimizer: torch.optim.Optimizer,
         scheduler: Any,
         checkpoint_dir: str = "ml_lab/checkpoints",
+        tokenizer_path: str = "ml_lab/tokenizer/multilingual_tokenizer.json",
         gradient_accumulation_steps: int = 2,
         use_amp: bool = True,
+        z_loss_weight: float = 1e-4,
         device: Optional[torch.device] = None,
-        save_every_steps: int = 1000
+        save_every_steps: int = 500,
+        eval_every_steps: int = 2500
     ):
         self.device = device or (torch.device("cuda" if torch.cuda.is_available() else "cpu"))
         self.model = model.to(self.device)
@@ -651,11 +1028,15 @@ class Kaggle100MTrainer:
         self.scheduler = scheduler
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.tokenizer_path = tokenizer_path
         self.grad_accum = gradient_accumulation_steps
-        self.use_amp = use_amp and (self.device.type == "cuda")
+        self.z_loss_weight = z_loss_weight
         self.save_every_steps = save_every_steps
+        self.eval_every_steps = eval_every_steps
 
-        # Multi-GPU DataParallel (e.g. 2x Tesla T4 on Kaggle)
+        self.amp_dtype, needs_scaler = get_preferred_amp_dtype(self.device)
+        self.use_amp = use_amp and (self.device.type == "cuda")
+
         self.is_multi_gpu = torch.cuda.device_count() > 1
         if self.is_multi_gpu:
             print(f"[*] Detected {torch.cuda.device_count()} CUDA GPUs! Enabling torch.nn.DataParallel.")
@@ -663,116 +1044,182 @@ class Kaggle100MTrainer:
         else:
             self.model_engine = self.model
 
-        self.scaler = GradScaler("cuda", enabled=self.use_amp)
+        self.scaler = GradScaler("cuda", enabled=self.use_amp and needs_scaler)
         self.sum_criterion = nn.CrossEntropyLoss(ignore_index=model.pad_idx, label_smoothing=0.1, reduction="sum")
 
         self.epoch = 0
+        self.epoch_batch_idx = 0
         self.global_step = 0
         self.best_val_loss = float("inf")
-        self.train_loss_history = []
-        self.val_loss_history = []
+        self.train_loss_history: List[float] = []
+        self.val_loss_history: List[float] = []
+        self._pause_requested = False
+
+        signal.signal(signal.SIGTERM, self._on_signal)
+
+    def _on_signal(self, signum, frame):
+        print(f"\n[SIGNAL] Received signal {signum}. Triggering graceful checkpoint save...")
+        self._pause_requested = True
+
+    def _build_config_dict(self, raw_model: ModernSeq2SeqTransformer) -> Dict[str, Any]:
+        return {
+            "vocab_size": raw_model.vocab_size,
+            "d_model": raw_model.d_model,
+            "n_heads": raw_model.n_heads,
+            "num_encoder_layers": raw_model.num_encoder_layers,
+            "num_decoder_layers": raw_model.num_decoder_layers,
+            "d_ff": raw_model.d_ff,
+            "dropout": raw_model.dropout_rate,
+            "use_rope": raw_model.use_rope,
+            "use_qk_norm": raw_model.use_qk_norm,
+            "share_embeddings": raw_model.share_embeddings,
+            "use_layerscale": raw_model.use_layerscale,
+            "layerscale_init": raw_model.layerscale_init,
+            "soft_cap": raw_model.soft_cap,
+            "model_type": "modern",
+        }
 
     def save_atomic_checkpoint(self, filename: str, is_best: bool = False):
         save_path = self.checkpoint_dir / filename
         tmp_path = self.checkpoint_dir / f"{filename}.tmp"
 
         raw_model = self.model_engine.module if self.is_multi_gpu else self.model
+        cfg_dict = self._build_config_dict(raw_model)
+
         state = {
             "epoch": self.epoch,
+            "epoch_batch_idx": self.epoch_batch_idx,
             "global_step": self.global_step,
             "best_val_loss": self.best_val_loss,
             "model_state_dict": raw_model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict() if self.scheduler else None,
-            "scaler_state_dict": self.scaler.state_dict() if self.use_amp else None,
-            "config": {
-                "vocab_size": raw_model.vocab_size,
-                "d_model": raw_model.d_model,
-                "n_heads": 12,
-                "num_encoder_layers": 6,
-                "num_decoder_layers": 6,
-                "d_ff": 2048,
-                "use_rope": True,
-                "use_qk_norm": True,
-                "share_embeddings": True,
-                "soft_cap": 30.0,
-                "model_type": "modern"
+            "scaler_state_dict": self.scaler.state_dict() if self.scaler.is_enabled() else None,
+            "config": cfg_dict,
+            "tokenizer_path": self.tokenizer_path,
+            "train_loss_history": self.train_loss_history,
+            "val_loss_history": self.val_loss_history,
+            "rng_state": {
+                "cpu": torch.get_rng_state(),
+                "python": random.getstate(),
+                "numpy": np.random.get_state() if np is not None else None,
             },
             "timestamp": time.time()
         }
         torch.save(state, tmp_path)
         os.replace(tmp_path, save_path)
-        print(f"[CHECKPOINT] Saved atomic checkpoint: {save_path.name} (Step {self.global_step}, Epoch {self.epoch+1})")
-
-        # In Kaggle with Persistence: Files only, mirror checkpoint to /kaggle/working/
-        if os.path.exists("/kaggle/working"):
-            try:
-                kw_path = Path("/kaggle/working") / filename
-                kw_tmp = Path("/kaggle/working") / f"{filename}.tmp"
-                torch.save(state, kw_tmp)
-                os.replace(kw_tmp, kw_path)
-            except Exception:
-                pass
+        print(f"[CHECKPOINT] Saved {save_path} (Step {self.global_step}, Epoch {self.epoch+1}, Batch {self.epoch_batch_idx})")
 
         if is_best:
             best_path = self.checkpoint_dir / "checkpoint_best.pt"
             tmp_best = self.checkpoint_dir / "checkpoint_best.pt.tmp"
-            torch.save(state, tmp_best)
+            inference_state = {
+                "epoch": self.epoch,
+                "global_step": self.global_step,
+                "best_val_loss": self.best_val_loss,
+                "model_state_dict": raw_model.state_dict(),
+                "config": cfg_dict,
+                "tokenizer_path": self.tokenizer_path,
+                "train_loss_history": self.train_loss_history,
+                "val_loss_history": self.val_loss_history,
+                "timestamp": time.time(),
+            }
+            torch.save(inference_state, tmp_best)
             os.replace(tmp_best, best_path)
-            print(f"[*] Best checkpoint updated: checkpoint_best.pt (Val Loss: {self.best_val_loss:.4f})")
-            if os.path.exists("/kaggle/working"):
+            print(f"[*] Best inference checkpoint updated: {best_path} (Val Loss: {self.best_val_loss:.4f})")
+
+        # Prune older epoch milestones beyond the latest 2 to stay well under Kaggle's 19.5 GB limit
+        epoch_files = sorted(self.checkpoint_dir.glob("checkpoint_epoch_*.pt"))
+        if len(epoch_files) > 2:
+            for old_file in epoch_files[:-2]:
                 try:
-                    kw_best = Path("/kaggle/working") / "checkpoint_best.pt"
-                    kw_best_tmp = Path("/kaggle/working") / "checkpoint_best.pt.tmp"
-                    torch.save(state, kw_best_tmp)
-                    os.replace(kw_best_tmp, kw_best)
+                    old_file.unlink()
                 except Exception:
                     pass
+
+    def write_progress_json(self, payload: Dict[str, Any]):
+        try:
+            prog_path = self.checkpoint_dir / "training_progress.json"
+            tmp_path = self.checkpoint_dir / "training_progress.json.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            os.replace(tmp_path, prog_path)
+        except Exception:
+            pass
 
     def resume_from_checkpoint(self, checkpoint_path: str) -> bool:
         if not os.path.exists(checkpoint_path):
             return False
-        print(f"[RESUME] Loading weights from {checkpoint_path}...")
+        print(f"[RESUME] Loading state from {checkpoint_path}...")
         chk = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         raw_model = self.model_engine.module if self.is_multi_gpu else self.model
         raw_model.load_state_dict(chk["model_state_dict"])
-        self.optimizer.load_state_dict(chk["optimizer_state_dict"])
+        if chk.get("optimizer_state_dict"):
+            self.optimizer.load_state_dict(chk["optimizer_state_dict"])
         if self.scheduler and chk.get("scheduler_state_dict"):
             self.scheduler.load_state_dict(chk["scheduler_state_dict"])
-        if self.use_amp and chk.get("scaler_state_dict"):
+        if self.scaler.is_enabled() and chk.get("scaler_state_dict"):
             self.scaler.load_state_dict(chk["scaler_state_dict"])
+
         self.epoch = chk.get("epoch", 0)
+        self.epoch_batch_idx = chk.get("epoch_batch_idx", 0)
         self.global_step = chk.get("global_step", 0)
         self.best_val_loss = chk.get("best_val_loss", float("inf"))
-        print(f"[RESUME SUCCESS] Resumed at Epoch {self.epoch+1}, Step {self.global_step} (Best Val: {self.best_val_loss:.4f})")
+        self.train_loss_history = chk.get("train_loss_history", [])
+        self.val_loss_history = chk.get("val_loss_history", [])
+
+        rng = chk.get("rng_state")
+        if rng:
+            if rng.get("cpu") is not None:
+                torch.set_rng_state(rng["cpu"].cpu())
+            if rng.get("python") is not None:
+                random.setstate(rng["python"])
+            if np is not None and rng.get("numpy") is not None:
+                np.random.set_state(rng["numpy"])
+
+        print(f"[RESUME SUCCESS] Resumed at Epoch {self.epoch+1}, Batch {self.epoch_batch_idx}, Step {self.global_step} (Best Val: {self.best_val_loss:.4f})")
         return True
 
-    def train_epoch(self, train_loader: DataLoader, val_loader: Optional[DataLoader], total_epochs: int = 5, log_interval: int = 50):
+    def train_epoch(
+        self,
+        train_loader: DataLoader,
+        val_loader: Optional[DataLoader],
+        total_epochs: int = 5,
+        log_interval: int = 50,
+        tokenizer: Optional[MultilingualSubwordTokenizer] = None
+    ):
         self.model_engine.train()
-        num_batches = len(train_loader)
-        epoch_start = time.time()
-        running_loss = 0.0
-        total_tokens = 0
-        self.optimizer.zero_grad()
+        if hasattr(train_loader, "batch_sampler") and hasattr(train_loader.batch_sampler, "set_epoch"):
+            train_loader.batch_sampler.set_epoch(self.epoch)
 
-        # Mid-epoch resume: skip batches that were already processed in this epoch
-        batches_done_in_epoch = self.global_step % num_batches if (self.global_step > 0 and self.epoch < total_epochs) else 0
-        if batches_done_in_epoch > 0:
-            print(f"  [MID-EPOCH RESUME] Fast-forwarding: skipping already trained batches 0 to {batches_done_in_epoch}...")
+        num_batches = len(train_loader)
+        run_start = time.time()
+        running_loss = 0.0
+        batches_in_window = 0
+        batches_processed_run = 0
+        tokens_processed_run = 0
+        skip_until = self.epoch_batch_idx
+        self.optimizer.zero_grad(set_to_none=True)
+
+        if skip_until > 0:
+            print(f"  [MID-EPOCH RESUME] Fast-forwarding batches 0..{skip_until-1} in Epoch {self.epoch+1}...")
 
         try:
             for batch_idx, batch in enumerate(train_loader):
-                if batch_idx < batches_done_in_epoch:
+                if batch_idx < skip_until:
                     continue
 
-                if Path("pause.flag").exists():
-                    print("\n[PAUSE] Found 'pause.flag'! Saving checkpoint and pausing gracefully...")
-                    try:
-                        Path("pause.flag").unlink()
-                    except Exception:
-                        pass
+                if self._pause_requested or Path("pause.flag").exists() or Path("/kaggle/working/pause.flag").exists():
+                    print("\n[PAUSE] Pause trigger detected! Saving checkpoint gracefully...")
+                    for pf in [Path("pause.flag"), Path("/kaggle/working/pause.flag")]:
+                        if pf.exists():
+                            try:
+                                pf.unlink()
+                            except Exception:
+                                pass
+                    self.epoch_batch_idx = batch_idx
                     self.save_atomic_checkpoint("checkpoint_latest.pt")
-                    print(f"[PAUSED] Saved checkpoint at Step {self.global_step}, Batch {batch_idx+1}.")
+                    print(f"[PAUSED] Saved at Epoch {self.epoch+1}, Batch {batch_idx+1}, Step {self.global_step}.")
                     return {"status": "paused", "epoch": self.epoch, "step": self.global_step}
 
                 src = batch["src"].to(self.device, non_blocking=True)
@@ -780,70 +1227,108 @@ class Kaggle100MTrainer:
                 tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
 
                 raw_model = self.model_engine.module if self.is_multi_gpu else self.model
-                batch_tokens = (tgt_out != raw_model.pad_idx).sum().item()
-                total_tokens += batch_tokens
+                valid_mask = tgt_out != raw_model.pad_idx
+                batch_tokens = int(valid_mask.sum().item())
+                tokens_processed_run += batch_tokens
 
                 chunk_start = (batch_idx // self.grad_accum) * self.grad_accum
                 actual_chunk_size = min(self.grad_accum, num_batches - chunk_start)
 
-                with autocast("cuda", enabled=self.use_amp):
+                with autocast("cuda", dtype=self.amp_dtype, enabled=self.use_amp):
                     logits = self.model_engine(src, tgt_in)
-                    batch_sum_loss = self.sum_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
+                    flat_logits = logits.view(-1, logits.size(-1))
+                    flat_targets = tgt_out.view(-1)
+                    batch_sum_loss = self.sum_criterion(flat_logits, flat_targets)
                     raw_loss = batch_sum_loss / max(batch_tokens, 1)
-                    loss = raw_loss / actual_chunk_size
+
+                    total_loss_step = raw_loss
+                    if self.z_loss_weight > 0:
+                        log_z = torch.logsumexp(flat_logits.float(), dim=-1)
+                        z_loss = (log_z ** 2)[valid_mask.view(-1)].mean()
+                        total_loss_step = raw_loss + self.z_loss_weight * z_loss
+
+                    loss = total_loss_step / actual_chunk_size
 
                 self.scaler.scale(loss).backward()
                 running_loss += raw_loss.item()
+                batches_in_window += 1
+                batches_processed_run += 1
+                self.epoch_batch_idx = batch_idx + 1
 
                 if (batch_idx + 1) % self.grad_accum == 0 or (batch_idx + 1) == num_batches:
                     self.scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(self.model_engine.parameters(), 1.0)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
-                    self.optimizer.zero_grad()
+                    self.optimizer.zero_grad(set_to_none=True)
 
                     if self.scheduler:
                         self.scheduler.step()
                     self.global_step += 1
 
-                    if self.global_step % self.save_every_steps == 0:
+                    if self.eval_every_steps > 0 and val_loader and self.global_step % self.eval_every_steps == 0:
+                        mid_val = self.evaluate(val_loader, max_batches=40)
+                        self.val_loss_history.append(mid_val)
+                        is_best = mid_val < self.best_val_loss
+                        if is_best:
+                            self.best_val_loss = mid_val
+                        self.save_atomic_checkpoint("checkpoint_latest.pt", is_best=is_best)
+                        print(f"  [MID-EVAL @ Step {self.global_step}] Val Loss: {mid_val:.4f} | Val PPL: {math.exp(min(mid_val, 20)):.2f} | Best: {self.best_val_loss:.4f}")
+                    elif self.global_step % self.save_every_steps == 0:
                         self.save_atomic_checkpoint("checkpoint_latest.pt")
 
                 if (batch_idx + 1) % log_interval == 0 or (batch_idx + 1) == num_batches:
-                    elapsed = time.time() - epoch_start
+                    elapsed = time.time() - run_start
                     batches_done = batch_idx + 1
-                    batches_per_sec = batches_done / max(elapsed, 0.001)
+                    batches_per_sec = batches_processed_run / max(elapsed, 0.001)
 
-                    epoch_time_left = (num_batches - batches_done) / max(batches_per_sec, 0.001)
+                    epoch_batches_left = num_batches - batches_done
+                    epoch_time_left = epoch_batches_left / max(batches_per_sec, 0.001)
                     epochs_remaining = max(total_epochs - (self.epoch + 1), 0)
-                    total_time_left = (epochs_remaining * num_batches + (num_batches - batches_done)) / max(batches_per_sec, 0.001)
-                    tok_per_sec = total_tokens / max(elapsed, 0.001)
+                    total_time_left = (epochs_remaining * num_batches + epoch_batches_left) / max(batches_per_sec, 0.001)
+                    tok_per_sec = tokens_processed_run / max(elapsed, 0.001)
 
-                    chunk_len = log_interval if (batch_idx + 1) % log_interval == 0 else (batch_idx % log_interval + 1)
-                    avg_loss = running_loss / chunk_len
+                    avg_loss = running_loss / max(batches_in_window, 1)
                     ppl = math.exp(min(avg_loss, 20.0))
                     lr = self.optimizer.param_groups[0]["lr"]
-
                     pct_epoch = (batches_done / num_batches) * 100.0
-                    total_pct = ((self.epoch * num_batches + batches_done) / (total_epochs * num_batches)) * 100.0
 
                     print(
                         f"Epoch {self.epoch+1:2d}/{total_epochs:2d} | "
                         f"Batch {batches_done:5d}/{num_batches:5d} ({pct_epoch:4.1f}%) | "
+                        f"Step {self.global_step:6d} | "
                         f"Loss: {avg_loss:5.3f} | PPL: {ppl:6.2f} | "
-                        f"LR: {lr:.2e} | Speed: {tok_per_sec:5.0f} tok/s | "
+                        f"LR: {lr:.2e} | Speed: {tok_per_sec:6.0f} tok/s | "
                         f"Epoch Left: {format_duration(epoch_time_left)} | "
                         f"Total ETA: {format_duration(total_time_left)}"
                     )
                     self.train_loss_history.append(avg_loss)
                     running_loss = 0.0
+                    batches_in_window = 0
+
+                    self.write_progress_json({
+                        "epoch": self.epoch + 1,
+                        "total_epochs": total_epochs,
+                        "batch": batches_done,
+                        "total_batches": num_batches,
+                        "global_step": self.global_step,
+                        "percent_epoch": round(pct_epoch, 1),
+                        "loss": round(avg_loss, 4),
+                        "perplexity": round(ppl, 2),
+                        "lr": lr,
+                        "tok_per_sec": int(tok_per_sec),
+                        "epoch_left": format_duration(epoch_time_left),
+                        "total_eta": format_duration(total_time_left),
+                        "best_val_loss": round(self.best_val_loss, 4) if self.best_val_loss != float("inf") else None,
+                        "timestamp": time.time(),
+                    })
 
         except KeyboardInterrupt:
-            print(f"\n[INTERRUPT] Caught Stop / Interrupt signal at Step {self.global_step}!")
+            print(f"\n[INTERRUPT] Caught Stop / Interrupt signal at Batch {self.epoch_batch_idx}, Step {self.global_step}!")
             print("Saving atomic checkpoint to preserve exact training state on disk...")
             self.save_atomic_checkpoint("checkpoint_latest.pt")
-            print(f"[PAUSED] Saved at Step {self.global_step}, Epoch {self.epoch+1}.")
-            print("[INFO] You can now restart your Kaggle session to refresh the 12-hour timer. It will resume right here!")
+            print(f"[PAUSED] Saved at Epoch {self.epoch+1}, Batch {self.epoch_batch_idx}, Step {self.global_step}.")
+            print("[INFO] You can safely restart your Kaggle session to refresh the 12-hour timer. It will resume right here!")
             return {"status": "interrupted", "epoch": self.epoch, "step": self.global_step}
 
         if val_loader:
@@ -852,16 +1337,21 @@ class Kaggle100MTrainer:
             is_best = val_loss < self.best_val_loss
             if is_best:
                 self.best_val_loss = val_loss
+            self.epoch += 1
+            self.epoch_batch_idx = 0
             self.save_atomic_checkpoint("checkpoint_latest.pt", is_best=is_best)
-            self.save_atomic_checkpoint(f"checkpoint_epoch_{self.epoch+1}.pt")
-            print(f"=== Epoch {self.epoch+1} Complete | Val Loss: {val_loss:.4f} | Best Val: {self.best_val_loss:.4f} ===")
+            self.save_atomic_checkpoint(f"checkpoint_epoch_{self.epoch}.pt")
+            print(f"=== Epoch {self.epoch}/{total_epochs} Complete | Val Loss: {val_loss:.4f} | Val PPL: {math.exp(min(val_loss, 20)):.2f} | Best Val: {self.best_val_loss:.4f} ===")
         else:
+            self.epoch += 1
+            self.epoch_batch_idx = 0
             self.save_atomic_checkpoint("checkpoint_latest.pt")
 
-        self.epoch += 1
+        if tokenizer is not None:
+            self.run_diagnostic_probes(tokenizer)
 
     @torch.no_grad()
-    def evaluate(self, val_loader: DataLoader) -> float:
+    def evaluate(self, val_loader: DataLoader, max_batches: Optional[int] = None) -> float:
         self.model_engine.eval()
         raw_model = self.model_engine.module if self.is_multi_gpu else self.model
         eval_criterion = nn.CrossEntropyLoss(ignore_index=raw_model.pad_idx, reduction="sum")
@@ -869,12 +1359,14 @@ class Kaggle100MTrainer:
         total_loss = 0.0
         total_tokens = 0
 
-        for batch in val_loader:
+        for idx, batch in enumerate(val_loader):
+            if max_batches is not None and idx >= max_batches:
+                break
             src = batch["src"].to(self.device, non_blocking=True)
             tgt_in = batch["tgt_in"].to(self.device, non_blocking=True)
             tgt_out = batch["tgt_out"].to(self.device, non_blocking=True)
 
-            with autocast("cuda", enabled=self.use_amp):
+            with autocast("cuda", dtype=self.amp_dtype, enabled=self.use_amp):
                 logits = self.model_engine(src, tgt_in)
                 loss = eval_criterion(logits.view(-1, logits.size(-1)), tgt_out.view(-1))
 
@@ -885,6 +1377,25 @@ class Kaggle100MTrainer:
         self.model_engine.train()
         return total_loss / max(total_tokens, 1)
 
+    @torch.no_grad()
+    def run_diagnostic_probes(self, tokenizer: MultilingualSubwordTokenizer):
+        raw_model = self.model_engine.module if self.is_multi_gpu else self.model
+        probes = [
+            ("Hello, how are you today?", "hi"),
+            ("Machine learning transforms modern technology.", "ta"),
+            ("Knowledge empowers people to build the future.", "te"),
+            ("नमस्ते, आप कैसे हैं?", "en"),
+        ]
+        print("\n[LIVE PROBES] Sample Greedy Translations:")
+        for text, tgt_lang in probes:
+            src_ids = tokenizer.encode(text, add_special_tokens=True)
+            src_t = torch.tensor([src_ids], dtype=torch.long)
+            ctrl_id = tokenizer.get_control_token_id(tgt_lang)
+            gen_ids = raw_model.greedy_generate(src_t, prefix_tokens=[ctrl_id], max_len=48)
+            out_text = tokenizer.decode(gen_ids, skip_special_tokens=True)
+            print(f"  [->{tgt_lang}] '{text}' => '{out_text}'")
+        print()
+
 
 # ==============================================================================
 # 6. MAIN EXECUTION PIPELINE
@@ -893,9 +1404,13 @@ class Kaggle100MTrainer:
 def main(args_list: Optional[List[str]] = None):
     parser = argparse.ArgumentParser(description="Train 100M Modern Transformer on Kaggle / Multi-GPU")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size per step (split across GPUs)")
+    parser.add_argument("--batch_size", type=int, default=96, help="Batch size per step (split across GPUs; bucketed)")
     parser.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps")
-    parser.add_argument("--warmup", type=int, default=4000, help="Noam warmup steps")
+    parser.add_argument("--lr", type=float, default=5e-4, help="Peak learning rate")
+    parser.add_argument("--warmup", type=int, default=2000, help="Warmup optimizer steps")
+    parser.add_argument("--scheduler", choices=["cosine", "noam"], default="cosine", help="LR scheduler type")
+    parser.add_argument("--save_every", type=int, default=500, help="Checkpoint save cadence (steps)")
+    parser.add_argument("--eval_every", type=int, default=2500, help="Mid-epoch validation cadence (steps)")
     parser.add_argument("--resume", type=str, default="", help="Path to checkpoint to resume from")
     parser.add_argument("--dataset_size", choices=["optimal", "medium", "smoke"], default="optimal",
                         help="optimal: 1.6M pairs (3.2M bidirectional), medium: 200k, smoke: 20k")
@@ -904,17 +1419,24 @@ def main(args_list: Optional[List[str]] = None):
     else:
         args, _ = parser.parse_known_args()
 
+    if torch.cuda.is_available():
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+
+    on_kaggle = os.path.exists("/kaggle/working")
+    ckpt_dir = "/kaggle/working/checkpoints" if on_kaggle else "ml_lab/checkpoints"
+
     print("=" * 80)
-    print("TRANSLATEME: 100M PARAMETER MODERN TRANSFORMER TRAINING RUN")
-    print(f"Device count: {torch.cuda.device_count()} CUDA GPU(s) available")
+    print("TRANSLATEME: 100M SOTA MODERN TRANSFORMER TRAINING RUN")
+    print(f"Device count: {torch.cuda.device_count()} CUDA GPU(s) | Checkpoint dir: {ckpt_dir}")
     for i in range(torch.cuda.device_count()):
         print(f"  GPU {i}: {torch.cuda.get_device_name(i)} ({torch.cuda.get_device_properties(i).total_memory / (1024**3):.1f} GB VRAM)")
     print("=" * 80)
 
     # 1. Dataset Verification
-    train_file = "ml_lab/datasets/processed/train.jsonl"
-    val_file = "ml_lab/datasets/processed/val.jsonl"
-    test_file = "ml_lab/datasets/processed/test.jsonl"
+    data_root = Path("ml_lab/datasets/processed")
+    train_file = str(data_root / "train.jsonl")
+    val_file = str(data_root / "val.jsonl")
 
     if not os.path.exists(train_file):
         print("\n[Phase 1] Processed dataset not found locally. Running Samanantar ingestion...")
@@ -933,7 +1455,7 @@ def main(args_list: Optional[List[str]] = None):
         print(f"\n[Phase 2] Loading existing subword tokenizer from {tokenizer_path}...")
         tokenizer = MultilingualSubwordTokenizer.load(tokenizer_path)
     else:
-        print(f"\n[Phase 2] Training subword BPE tokenizer (16,384 vocab) strictly on train split...")
+        print("\n[Phase 2] Training subword BPE tokenizer (16,384 vocab) strictly on train split...")
         texts = []
         with open(train_file, "r", encoding="utf-8") as f:
             for idx, line in enumerate(f):
@@ -947,90 +1469,119 @@ def main(args_list: Optional[List[str]] = None):
 
     print(f"Tokenizer active. Vocab size: {tokenizer.vocab_size:,}")
 
-    # 3. Model Initialization (111.72M Parameters)
-    print("\n[Phase 3] Initializing ModernSeq2SeqTransformer (111.72M parameters) from random scratch weights...")
-    model = Modern100MTransformer(
+    # 3. Model Initialization (Exact ModernSeq2SeqTransformer 111.7M Architecture)
+    print("\n[Phase 3] Initializing ModernSeq2SeqTransformer (~111.7M parameters) from random scratch weights...")
+    model = ModernSeq2SeqTransformer(
         vocab_size=tokenizer.vocab_size,
         d_model=768,
         n_heads=12,
-        num_layers=6,
+        num_encoder_layers=6,
+        num_decoder_layers=6,
         d_ff=2048,
         dropout=0.1,
         pad_idx=tokenizer.pad_id,
         bos_idx=tokenizer.bos_id,
         eos_idx=tokenizer.eos_id,
+        use_qk_norm=True,
+        use_rope=True,
+        share_embeddings=True,
+        use_layerscale=True,
+        layerscale_init=0.1,
         soft_cap=30.0
     )
     total_params = model.count_parameters()
     print(f"Total Trainable Parameters: {total_params:,} ({total_params / 1e6:.2f}M)")
 
-    # 4. DataLoaders
-    print("\n[Phase 4] Building PyTorch DataLoaders...")
-    train_dataset = JsonlNMTDataset(train_file)
-    val_dataset = JsonlNMTDataset(val_file)
+    # 4. Pre-Tokenized Datasets & Length-Bucketed DataLoaders
+    print("\n[Phase 4] Preparing Pre-Tokenized Datasets & LengthBucketBatchSampler...")
+    train_dataset = PreTokenizedNMTDataset(
+        train_file, tokenizer, max_len=128, cache_path=str(data_root / "train_tok_v1.pt")
+    )
+    val_dataset = PreTokenizedNMTDataset(
+        val_file, tokenizer, max_len=128, cache_path=str(data_root / "val_tok_v1.pt")
+    )
     print(f"Train instances: {len(train_dataset):,} | Val instances: {len(val_dataset):,}")
 
-    collate_fn = build_nmt_collate_fn(tokenizer, max_len=128)
+    collate_fn = build_tensor_collate_fn(pad_id=tokenizer.pad_id)
+    train_sampler = LengthBucketBatchSampler(train_dataset.lengths, batch_size=args.batch_size, seed=42)
+    num_workers = 2 if sys.platform != "win32" else 0
+
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
+        batch_sampler=train_sampler,
         collate_fn=collate_fn,
-        num_workers=2 if sys.platform != "win32" else 0,
-        pin_memory=torch.cuda.is_available()
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0)
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         collate_fn=collate_fn,
-        num_workers=2 if sys.platform != "win32" else 0,
-        pin_memory=torch.cuda.is_available()
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=(num_workers > 0)
     )
 
+    steps_per_epoch = max(1, math.ceil(len(train_loader) / args.grad_accum))
+    total_steps = steps_per_epoch * args.epochs
+
     # 5. Optimizer & Scheduler
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-7, betas=(0.9, 0.98), eps=1e-9, weight_decay=0.01)
-    scheduler = NoamScheduler(optimizer, d_model=768, warmup_steps=args.warmup, factor=1.0)
+    optimizer = configure_adamw_optimizer(model, lr=args.lr if args.scheduler == "cosine" else 1e-7, weight_decay=0.01)
+    if args.scheduler == "cosine":
+        scheduler = CosineWarmupScheduler(optimizer, warmup_steps=args.warmup, total_steps=total_steps, peak_lr=args.lr)
+    else:
+        scheduler = NoamScheduler(optimizer, d_model=768, warmup_steps=args.warmup, factor=1.0)
+
+    print(f"Optimizer: Fused AdamW (1D Norm/Gamma/Bias decay-exempt) | Scheduler: {args.scheduler} (steps={total_steps:,})")
 
     # 6. Trainer Execution
     trainer = Kaggle100MTrainer(
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
-        checkpoint_dir="ml_lab/checkpoints",
+        checkpoint_dir=ckpt_dir,
+        tokenizer_path=tokenizer_path,
         gradient_accumulation_steps=args.grad_accum,
         use_amp=True,
-        save_every_steps=500
+        save_every_steps=args.save_every,
+        eval_every_steps=args.eval_every
     )
 
-    # 6. Auto-Resume Check: explicit flag or latest checkpoint on disk (/kaggle/working or local)
     candidates = [
         args.resume if args.resume else "",
-        str(Path(trainer.checkpoint_dir) / "checkpoint_latest.pt"),
+        str(Path(ckpt_dir) / "checkpoint_latest.pt"),
         "/kaggle/working/checkpoint_latest.pt",
-        "/kaggle/working/ml_lab/checkpoints/checkpoint_latest.pt"
+        "/kaggle/working/checkpoints/checkpoint_latest.pt",
+        "ml_lab/checkpoints/checkpoint_latest.pt"
     ]
     for ckpt in candidates:
         if ckpt and os.path.exists(ckpt):
-            print(f"\n[AUTO-RESUME] Found existing checkpoint at {ckpt}! Resuming without losing progress...")
+            print(f"\n[AUTO-RESUME] Found checkpoint at {ckpt}! Resuming without losing progress...")
             trainer.resume_from_checkpoint(ckpt)
             break
 
     print(f"\n[Phase 5] Starting Training for {args.epochs} Epochs...")
-    for epoch in range(trainer.epoch, args.epochs):
-        res = trainer.train_epoch(train_loader, val_loader, total_epochs=args.epochs, log_interval=50)
+    for _ in range(trainer.epoch, args.epochs):
+        res = trainer.train_epoch(
+            train_loader, val_loader, total_epochs=args.epochs, log_interval=50, tokenizer=tokenizer
+        )
         if isinstance(res, dict) and res.get("status") in ("paused", "interrupted"):
-            print(f"\n[PAUSED] Training halted cleanly. State is preserved on disk in /kaggle/working.")
+            print(f"\n[PAUSED] Training halted cleanly. State is preserved on disk in {ckpt_dir}.")
             break
 
-    print("\n[Phase 6] Training Complete! Best Val Loss: {:.4f}".format(trainer.best_val_loss))
+    print(f"\n[Phase 6] Training Complete! Best Val Loss: {trainer.best_val_loss:.4f}")
 
-    if os.path.exists("/kaggle/working"):
+    if on_kaggle:
         import shutil
-        best_pt = "ml_lab/checkpoints/checkpoint_best.pt"
-        if os.path.exists(best_pt):
-            shutil.copy(best_pt, "/kaggle/working/checkpoint_best.pt")
+        best_pt = Path(ckpt_dir) / "checkpoint_best.pt"
+        if best_pt.exists() and str(best_pt) != "/kaggle/working/checkpoint_best.pt":
+            shutil.copy2(best_pt, "/kaggle/working/checkpoint_best.pt")
             print("[KAGGLE EXPORT] Copied best model to /kaggle/working/checkpoint_best.pt")
+        if os.path.exists(tokenizer_path):
+            shutil.copy2(tokenizer_path, "/kaggle/working/multilingual_tokenizer.json")
+            print("[KAGGLE EXPORT] Copied tokenizer to /kaggle/working/multilingual_tokenizer.json")
 
 
 if __name__ == "__main__":

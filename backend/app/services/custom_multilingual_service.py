@@ -85,11 +85,13 @@ class CustomMultilingualEngine:
                     d_ff=self.config.get("d_ff", 2048),
                     dropout=self.config.get("dropout", 0.1),
                     pad_idx=self.tokenizer.pad_id,
-                    bos_idx=self.tokenizer.bos_id,
+                    bos_idx=getattr(self.tokenizer, "bos_id", self.tokenizer.sos_id),
                     eos_idx=self.tokenizer.eos_id,
                     use_rope=self.config.get("use_rope", True),
                     use_qk_norm=self.config.get("use_qk_norm", True),
                     share_embeddings=self.config.get("share_embeddings", True),
+                    use_layerscale=self.config.get("use_layerscale", True),
+                    layerscale_init=self.config.get("layerscale_init", 0.1),
                     soft_cap=self.config.get("soft_cap", 30.0)
                 )
                 self.model = ModernSeq2SeqTransformer(modern_cfg).to(self.device)
@@ -216,10 +218,20 @@ class CustomMultilingualEngine:
 
 
 
-        # Encode source sequence: target language tag prefix + source text
+        # ModernSeq2SeqTransformer is trained with decoder-side <2tgt_lang> prefix ([bos, ctrl_id]);
+        # Legacy Seq2SeqTransformer checkpoint uses source-side ctrl prefix ([sos, ctrl_id, ...eos]).
+        from ml_lab.custom_transformer.modern_transformer import ModernSeq2SeqTransformer
+        is_modern = isinstance(self.model, ModernSeq2SeqTransformer)
         ctrl_id = self.tokenizer.get_control_token_id(tgt_code)
         raw_ids = self.tokenizer.encode(text_clean, add_special_tokens=False)
-        src_token_ids = [self.tokenizer.sos_id, ctrl_id] + raw_ids + [self.tokenizer.eos_id]
+
+        if is_modern:
+            src_token_ids = [self.tokenizer.sos_id] + raw_ids + [self.tokenizer.eos_id]
+            dec_prefix = [ctrl_id]
+        else:
+            src_token_ids = [self.tokenizer.sos_id, ctrl_id] + raw_ids + [self.tokenizer.eos_id]
+            dec_prefix = None
+
         src_tensor = torch.tensor([src_token_ids], dtype=torch.long, device=self.device)
 
         cross_attention_matrix = None
@@ -232,12 +244,12 @@ class CustomMultilingualEngine:
                 beams = self.model.beam_search_decode(
                     src_tensor,
                     beam_size=num_beams,
-                    max_len=64,
+                    max_len=96 if is_modern else 64,
                     sos_idx=self.tokenizer.sos_id,
                     eos_idx=self.tokenizer.eos_id,
-                    prefix_tokens=None,
+                    prefix_tokens=dec_prefix,
                     disallowed_mask=script_mask,
-                    no_repeat_ngram_size=2
+                    no_repeat_ngram_size=3 if is_modern else 2
                 )
                 best_seq = [i for i in beams[0][0][0].tolist() if i not in (self.tokenizer.sos_id, self.tokenizer.eos_id, self.tokenizer.pad_id)]
                 translated_text = self.tokenizer.decode(best_seq).strip()
@@ -253,12 +265,12 @@ class CustomMultilingualEngine:
                     src_tensor,
                     sos_idx=self.tokenizer.sos_id,
                     eos_idx=self.tokenizer.eos_id,
-                    prefix_tokens=None,
-                    max_len=64,
+                    prefix_tokens=dec_prefix,
+                    max_len=96 if is_modern else 64,
                     return_attention=return_attention,
-                    repetition_penalty=1.2,
+                    repetition_penalty=1.15 if is_modern else 1.2,
                     disallowed_mask=script_mask,
-                    no_repeat_ngram_size=2
+                    no_repeat_ngram_size=3 if is_modern else 2
                 )
                 if return_attention:
                     out, attn = decode_res

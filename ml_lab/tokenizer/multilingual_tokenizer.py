@@ -44,11 +44,13 @@ class MultilingualSubwordTokenizer:
             self.unk_id = self.tokenizer.token_to_id("<unk>") if self.tokenizer.token_to_id("<unk>") is not None else 1
             bos_cand = self.tokenizer.token_to_id("<bos>")
             self.sos_id = bos_cand if bos_cand is not None else (self.tokenizer.token_to_id("<sos>") or 2)
+            self.bos_id = self.sos_id
             self.eos_id = self.tokenizer.token_to_id("<eos>") if self.tokenizer.token_to_id("<eos>") is not None else 3
         except Exception:
             self.pad_id = 0
             self.unk_id = 1
             self.sos_id = 2
+            self.bos_id = 2
             self.eos_id = 3
 
     @property
