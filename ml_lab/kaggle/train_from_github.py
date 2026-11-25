@@ -911,12 +911,34 @@ def main(args_list: Optional[List[str]] = None):
     print("=" * 80)
 
     if world_size > 1:
-        mp.spawn(
-            ddp_worker,
-            args=(world_size, args, str(train_tok_cache), str(val_tok_cache), tokenizer_path, ckpt_dir),
-            nprocs=world_size,
-            join=True,
-        )
+        parent_interrupted = False
+        orig_sigint = signal.getsignal(signal.SIGINT)
+        orig_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _parent_sig_handler(signum, frame):
+            nonlocal parent_interrupted
+            if not parent_interrupted:
+                parent_interrupted = True
+                try:
+                    (Path(ckpt_dir) / "pause.flag").write_text("signal_pause", encoding="utf-8")
+                except Exception:
+                    pass
+                print("\n[PAUSE] Interrupt received — waiting for GPU workers to save atomic checkpoint cleanly...", flush=True)
+
+        signal.signal(signal.SIGINT, _parent_sig_handler)
+        signal.signal(signal.SIGTERM, _parent_sig_handler)
+        try:
+            ctx = mp.spawn(
+                ddp_worker,
+                args=(world_size, args, str(train_tok_cache), str(val_tok_cache), tokenizer_path, ckpt_dir),
+                nprocs=world_size,
+                join=False,
+            )
+            while not ctx.join(timeout=1.0):
+                pass
+        finally:
+            signal.signal(signal.SIGINT, orig_sigint)
+            signal.signal(signal.SIGTERM, orig_sigterm)
     else:
         ddp_worker(0, 1, args, str(train_tok_cache), str(val_tok_cache), tokenizer_path, ckpt_dir)
 
