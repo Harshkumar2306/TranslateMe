@@ -34,7 +34,7 @@ models/checkpoints/*
 *.bin
 *.safetensors
 *.onnx
-!ml_lab/checkpoints/custom_multilingual_transformer.pt
+ml_lab/checkpoints/legacy_28m/
 
 # Compiled Frontend Distribution
 !frontend/dist/

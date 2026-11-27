@@ -5,7 +5,7 @@ and error handling on image-only/empty documents.
 """
 
 import io
-import fitz  # PyMuPDF
+import pymupdf
 from fastapi import UploadFile, HTTPException
 import pytest
 
@@ -14,7 +14,7 @@ from backend.app.services.document_service import extract_text_from_file, transl
 
 def create_dummy_pdf(text: str) -> bytes:
     """Generates an in-memory PDF with specified text."""
-    doc = fitz.open()
+    doc = pymupdf.open()
     page = doc.new_page()
     page.insert_text((50, 72), text)
     pdf_bytes = doc.tobytes()

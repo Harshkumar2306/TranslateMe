@@ -13,6 +13,6 @@ services:
       - HOST=0.0.0.0
       - MODEL_NAME=TranslateMe-Custom-Multilingual-Transformer
     volumes:
-      - ./lingua_ai.db:/app/lingua_ai.db
+      - ./translateme.db:/app/translateme.db
       - ./ml_lab/checkpoints:/app/ml_lab/checkpoints
     restart: unless-stopped

@@ -2,7 +2,7 @@
 SQLAlchemy Translation History Model
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Text, Float, DateTime
 from backend.app.database.session import Base
 
@@ -19,5 +19,5 @@ class TranslationHistory(Base):
     target_language_name = Column(String(100), nullable=True)
     detected_language = Column(String(50), nullable=True)
     inference_time = Column(Float, default=0.0)
-    model_name = Column(String(100), default="TranslateMe-Custom-Transformer")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    model_name = Column(String(120), default="TranslateMe Custom Multilingual Transformer")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

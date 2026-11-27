@@ -5,8 +5,7 @@ and reassembles the translated document preserving paragraph structure.
 """
 
 import time
-import io
-import fitz  # PyMuPDF
+import pymupdf
 from typing import List, Tuple
 from fastapi import UploadFile, HTTPException
 
@@ -34,12 +33,12 @@ def extract_text_from_file(file: UploadFile, content: bytes) -> List[str]:
 
     elif filename.endswith(".pdf"):
         try:
-            doc = fitz.open(stream=content, filetype="pdf")
+            doc = pymupdf.open(stream=content, filetype="pdf")
             if doc.page_count == 0:
                 raise HTTPException(status_code=400, detail="The uploaded PDF document has 0 pages.")
 
             total_extracted_chars = 0
-            for page_idx, page in enumerate(doc):
+            for page in doc:
                 blocks = page.get_text("blocks")
                 # Sort blocks vertically by y0 coordinate to preserve reading flow
                 blocks.sort(key=lambda b: (b[1], b[0]))
@@ -75,7 +74,7 @@ def translate_document(
     paragraphs: List[str],
     source_lang: str,
     target_lang: str,
-    max_paragraphs: int = 50
+    max_paragraphs: int = 50,
 ) -> Tuple[str, float]:
     """
     Translates a list of document paragraphs using our custom PyTorch Transformer.
@@ -90,7 +89,7 @@ def translate_document(
             source_lang=source_lang,
             target_lang=target_lang,
             num_beams=1,
-            return_alternatives=False
+            return_alternatives=False,
         )
         translated_paras.append(res["translated_text"])
 

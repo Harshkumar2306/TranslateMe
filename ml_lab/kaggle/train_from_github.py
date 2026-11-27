@@ -365,6 +365,14 @@ class PauseMonitor:
     def _handler(self, signum, frame):
         self.signal_received = True
 
+    def _clear_pause_flags(self):
+        for p in self.pause_paths:
+            try:
+                if p.exists():
+                    p.unlink()
+            except Exception:
+                pass
+
     def should_pause(self, rank: int, world_size: int, device: torch.device) -> Tuple[bool, str]:
         reason = ""
         local_flag = 0
@@ -372,6 +380,7 @@ class PauseMonitor:
             if self.signal_received:
                 local_flag = 1
                 reason = "SIGINT/SIGTERM (Stop button)"
+                self._clear_pause_flags()
             elif (time.time() - self.start_time) >= self.max_seconds:
                 local_flag = 2
                 reason = f"Safety wall-clock limit ({self.max_seconds / 3600:.2f}h reached before 12h timeout)"
@@ -380,10 +389,7 @@ class PauseMonitor:
                     if p.exists():
                         local_flag = 3
                         reason = f"pause.flag detected ({p})"
-                        try:
-                            p.unlink()
-                        except Exception:
-                            pass
+                        self._clear_pause_flags()
                         break
 
         if world_size > 1 and dist.is_initialized():
@@ -440,7 +446,7 @@ def save_checkpoint_rank0(
     }
     torch.save(state, tmp_path)
     os.replace(tmp_path, save_path)
-    print(f"[CHECKPOINT] Atomic save: {save_path} (Epoch {epoch+1}, Batch {epoch_batch_idx}, Step {global_step})")
+    print(f"[CHECKPOINT] Atomic save: {save_path} (Epoch {epoch+1}, Batch {epoch_batch_idx}, Step {global_step})", flush=True)
 
     if is_best:
         best_path = ckpt_dir / "checkpoint_best.pt"
@@ -712,13 +718,13 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
                 if should_stop:
                     epoch_batch_idx = batch_idx
                     if rank == 0:
-                        print(f"\n[PAUSE TRIGGERED] {stop_reason}. Saving atomic checkpoint before exit...")
+                        print(f"\n[PAUSE TRIGGERED] {stop_reason}. Saving atomic checkpoint before exit...", flush=True)
                         save_checkpoint_rank0(
                             ckpt_dir, "checkpoint_latest.pt", raw_model, optimizer, scheduler, scaler,
                             tokenizer_path, epoch, epoch_batch_idx, global_step, best_val_loss,
                             train_history, val_history, is_best=False
                         )
-                        print("[PAUSED CLEANLY] You can reset your Kaggle 12h session now; next run resumes at this exact batch.")
+                        print("[PAUSED CLEANLY] You can reset your Kaggle 12h session now; next run resumes at this exact batch.", flush=True)
                     halted = True
                     break
 
@@ -853,8 +859,12 @@ def ddp_worker(rank: int, world_size: int, args, train_tok_cache: str, val_tok_c
             run_12dir_probes(raw_model, tokenizer)
 
     if use_ddp and dist.is_initialized():
-        dist.barrier()
-        dist.destroy_process_group()
+        try:
+            if not halted:
+                dist.barrier()
+            dist.destroy_process_group()
+        except Exception:
+            pass
 
 
 def parse_args(args_list: Optional[List[str]] = None):
@@ -902,6 +912,14 @@ def main(args_list: Optional[List[str]] = None):
     args = parse_args(args_list)
     train_tok_cache, val_tok_cache, tokenizer_path, ckpt_dir = prepare_artifacts(args)
 
+    # Clear any stale pause.flag from an interrupted prior run before spawning workers
+    for stale_flag in (Path("pause.flag"), Path("/kaggle/working/pause.flag"), Path(ckpt_dir) / "pause.flag"):
+        try:
+            if stale_flag.exists():
+                stale_flag.unlink()
+        except Exception:
+            pass
+
     gpu_count = torch.cuda.device_count() if torch.cuda.is_available() else 0
     world_size = gpu_count if (gpu_count > 1 and not args.no_ddp) else 1
 
@@ -911,14 +929,14 @@ def main(args_list: Optional[List[str]] = None):
     print("=" * 80)
 
     if world_size > 1:
-        parent_interrupted = False
+        parent_interrupted_at: Optional[float] = None
         orig_sigint = signal.getsignal(signal.SIGINT)
         orig_sigterm = signal.getsignal(signal.SIGTERM)
 
         def _parent_sig_handler(signum, frame):
-            nonlocal parent_interrupted
-            if not parent_interrupted:
-                parent_interrupted = True
+            nonlocal parent_interrupted_at
+            if parent_interrupted_at is None:
+                parent_interrupted_at = time.time()
                 try:
                     (Path(ckpt_dir) / "pause.flag").write_text("signal_pause", encoding="utf-8")
                 except Exception:
@@ -935,7 +953,15 @@ def main(args_list: Optional[List[str]] = None):
                 join=False,
             )
             while not ctx.join(timeout=1.0):
-                pass
+                if parent_interrupted_at is not None and (time.time() - parent_interrupted_at) > 180.0:
+                    tmp_ckpt = Path(ckpt_dir) / "checkpoint_latest.pt.tmp"
+                    if not tmp_ckpt.exists():
+                        print("\n[PAUSE TIMEOUT] GPU workers lingered after checkpoint save; terminating workers cleanly.", flush=True)
+                        for p in ctx.processes:
+                            if p.is_alive():
+                                p.terminate()
+                        ctx.join(timeout=5.0)
+                        break
         finally:
             signal.signal(signal.SIGINT, orig_sigint)
             signal.signal(signal.SIGTERM, orig_sigterm)

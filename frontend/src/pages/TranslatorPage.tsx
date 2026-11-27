@@ -9,59 +9,112 @@ import {
   Clock,
   Layers,
   AlertCircle,
-  HelpCircle,
-  Cpu,
-  BrainCircuit
+  Wand2,
 } from 'lucide-react';
-import { Language, TranslationResult } from '../types';
-import { translateText } from '../services/api';
+import { Language, TranslationResult, ModelInfo } from '../types';
+import { translateText, detectLanguage } from '../services/api';
 import { LanguageSelector } from '../components/LanguageSelector';
 
 interface TranslatorPageProps {
   languages: Language[];
+  modelInfo?: ModelInfo | null;
   initialSourceText?: string;
   initialSourceLang?: string;
   initialTargetLang?: string;
+  onReuseConsumed?: () => void;
 }
 
 export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   languages,
+  modelInfo,
   initialSourceText = '',
   initialSourceLang = 'en',
   initialTargetLang = 'hi',
+  onReuseConsumed,
 }) => {
   const [sourceText, setSourceText] = useState(initialSourceText);
   const [sourceLang, setSourceLang] = useState(initialSourceLang);
   const [targetLang, setTargetLang] = useState(initialTargetLang);
   const [result, setResult] = useState<TranslationResult | null>(null);
+  const [detectedBadge, setDetectedBadge] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<'custom'>('custom');
+  const [copiedAltIdx, setCopiedAltIdx] = useState<number | null>(null);
   const [numBeams, setNumBeams] = useState(2);
   const [showAlternatives, setShowAlternatives] = useState(true);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [speakingSide, setSpeakingSide] = useState<'src' | 'tgt' | null>(null);
 
-  // Sync props if changed
   useEffect(() => {
-    if (initialSourceText) setSourceText(initialSourceText);
-    if (initialSourceLang) setSourceLang(initialSourceLang);
-    if (initialTargetLang) setTargetLang(initialTargetLang);
-  }, [initialSourceText, initialSourceLang, initialTargetLang]);
+    if (initialSourceText) {
+      setSourceText(initialSourceText);
+      setSourceLang(initialSourceLang || 'en');
+      setTargetLang(initialTargetLang || 'hi');
+      setResult(null);
+      setError(null);
+      onReuseConsumed?.();
+    }
+  }, [initialSourceText, initialSourceLang, initialTargetLang, onReuseConsumed]);
 
-  // Handle translation
-  const handleTranslate = async () => {
-    if (!sourceText.trim()) return;
+  const isSameLanguage = sourceLang !== 'auto' && sourceLang === targetLang;
+
+  const getLocale = (langCode: string): string => {
+    const found = languages.find((l) => l.code === langCode);
+    return found?.iso || langCode || 'en-US';
+  };
+
+  const handleSelectSource = (code: string) => {
+    if (code !== 'auto' && code === targetLang) {
+      if (sourceLang !== 'auto') {
+        setTargetLang(sourceLang);
+      } else {
+        const alt = languages.find((l) => l.code !== code);
+        if (alt) setTargetLang(alt.code);
+      }
+    }
+    setSourceLang(code);
+  };
+
+  const handleSelectTarget = (code: string) => {
+    if (code === sourceLang && sourceLang !== 'auto') {
+      setSourceLang(targetLang);
+    }
+    setTargetLang(code);
+  };
+
+  const handleTranslate = async (
+    overrideText?: string,
+    overrideSrc?: string,
+    overrideTgt?: string
+  ) => {
+    const textToRun = (overrideText ?? sourceText).trim();
+    if (!textToRun) return;
+
+    let effectiveSrc = overrideSrc ?? sourceLang;
+    const effectiveTgt = overrideTgt ?? targetLang;
+
+    if (effectiveSrc !== 'auto' && effectiveSrc === effectiveTgt) {
+      setError('Source and target languages must be different.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setDetectedBadge(null);
+
     try {
+      if (effectiveSrc === 'auto') {
+        const det = await detectLanguage(textToRun);
+        effectiveSrc = det.detected_code || 'en';
+        setDetectedBadge(`${det.detected_name || effectiveSrc} (${Math.round((det.confidence || 0.9) * 100)}%)`);
+      }
+
       const res = await translateText(
-        sourceText,
-        sourceLang,
-        targetLang,
+        textToRun,
+        effectiveSrc,
+        effectiveTgt,
         numBeams,
-        showAlternatives,
-        'custom'
+        numBeams > 1 && showAlternatives
       );
       setResult(res);
     } catch (err: any) {
@@ -71,38 +124,46 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     }
   };
 
-  // Swap languages
   const handleSwap = () => {
     if (sourceLang === 'auto') return;
-    const temp = sourceLang;
-    setSourceLang(targetLang);
-    setTargetLang(temp);
-    if (result) {
+    const nextSrc = targetLang;
+    const nextTgt = sourceLang;
+    setSourceLang(nextSrc);
+    setTargetLang(nextTgt);
+    if (result?.translated_text) {
       setSourceText(result.translated_text);
       setResult(null);
     }
   };
 
-  // Copy to clipboard
-  const handleCopy = () => {
-    if (!result?.translated_text) return;
-    navigator.clipboard.writeText(result.translated_text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = (text: string, altIdx: number | null = null) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    if (altIdx === null) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } else {
+      setCopiedAltIdx(altIdx);
+      setTimeout(() => setCopiedAltIdx(null), 1800);
+    }
   };
 
-  // Text-to-Speech
-  const handleSpeak = (text: string) => {
+  const handleSpeak = (text: string, langCode: string, side: 'src' | 'tgt') => {
     if (!('speechSynthesis' in window) || !text) return;
+    if (speakingSide === side) {
+      window.speechSynthesis.cancel();
+      setSpeakingSide(null);
+      return;
+    }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    utterance.lang = getLocale(langCode);
+    utterance.onstart = () => setSpeakingSide(side);
+    utterance.onend = () => setSpeakingSide(null);
+    utterance.onerror = () => setSpeakingSide(null);
     window.speechSynthesis.speak(utterance);
   };
 
-  // Keyboard shortcut: Cmd/Ctrl + Enter
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
@@ -110,56 +171,55 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     }
   };
 
-  // Quick preset trials for the 4 supported languages
+  const wordCount = sourceText.trim() ? sourceText.trim().split(/\s+/).length : 0;
+
   const customPresets = [
-    { label: 'English → Hindi', src: 'en', tgt: 'hi', text: 'TranslateMe is an open-source multilingual neural machine translation engine.' },
-    { label: 'English → Tamil', src: 'en', tgt: 'ta', text: 'Machine learning models learn patterns from training data.' },
-    { label: 'English → Telugu', src: 'en', tgt: 'te', text: 'Deep learning models use multi-layer neural networks.' },
-    { label: 'Hindi → English', src: 'hi', tgt: 'en', text: 'नमस्ते, आप कैसे हैं?' },
-    { label: 'Tamil → English', src: 'ta', tgt: 'en', text: 'செயற்கை நுண்ணறிவு மனிதர்களின் திறனை மேம்படுத்துகிறது.' },
-    { label: 'Telugu → English', src: 'te', tgt: 'en', text: 'కంప్యూటర్ సైన్స్ ఆధునిక ప్రపంచాన్ని మారుస్తుంది.' },
+    { label: 'EN → HI', src: 'en', tgt: 'hi', text: 'TranslateMe is an open-source multilingual neural machine translation engine.' },
+    { label: 'EN → TA', src: 'en', tgt: 'ta', text: 'Machine learning models learn patterns from parallel training data.' },
+    { label: 'EN → TE', src: 'en', tgt: 'te', text: 'Deep learning models use multi-layer neural networks.' },
+    { label: 'HI → TA', src: 'hi', tgt: 'ta', text: 'नमस्ते, आज आप कैसे हैं?' },
+    { label: 'TA → TE', src: 'ta', tgt: 'te', text: 'வணக்கம், இன்று நீங்கள் எப்படி இருக்கிறீர்கள்?' },
+    { label: 'TE → EN', src: 'te', tgt: 'en', text: 'కంప్యూటర్ సైన్స్ ఆధునిక ప్రపంచాన్ని మారుస్తుంది.' },
   ];
 
+  const encCount = modelInfo?.encoder_layers ?? modelInfo?.layers;
+  const decCount = modelInfo?.decoder_layers ?? modelInfo?.layers;
+  const layerText = encCount && decCount
+    ? encCount === decCount
+      ? `${encCount} Layers`
+      : `${encCount}E / ${decCount}D Layers`
+    : null;
+
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
+    <div className="max-w-6xl mx-auto px-4 py-7 sm:py-9 animate-fade-up">
       {/* Hero Header */}
-      <div className="text-center mb-8">
-        <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-          From-Scratch Multilingual Transformer
+      <div className="text-center mb-7">
+        <h1 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
+          TranslateMe Studio
         </h1>
         <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          100% custom PyTorch encoder-decoder Transformer. Randomly initialized, trained from scratch on parallel corpora with BPE subwords. Zero pretrained weights.
+          {modelInfo
+            ? `${modelInfo.model_name} • ${layerText} • ${modelInfo.attention_heads} Heads • d=${modelInfo.d_model} • ${modelInfo.vocab_size}`
+            : 'Multilingual Neural Machine Translation trained from scratch in PyTorch.'}
         </p>
 
-        {/* Model Architecture Badges */}
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2.5">
-          <div className="flex items-center gap-2 px-4 py-2 rounded-2xl text-xs sm:text-sm font-bold bg-gradient-to-r from-violet-600 to-indigo-600 text-white border border-violet-500 shadow-md shadow-violet-500/25">
-            <Cpu className="w-4 h-4 text-violet-200" />
-            <span>Custom Seq2Seq Transformer (Vaswani et al., 2017)</span>
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-800/90 text-white font-extrabold uppercase tracking-wider">
-              27.97M Params
-            </span>
-          </div>
-          <div className="flex items-center gap-2 px-3 py-2 rounded-2xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-            <Layers className="w-3.5 h-3.5 text-indigo-500" />
-            <span>6 Enc / 6 Dec • 6 Heads • d_model=384 • 8,192 BPE Subwords</span>
-          </div>
-        </div>
-
-        {/* Quick Test Presets */}
-        <div className="mt-4 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
-          <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1 flex-shrink-0">
-            Parallel Presets:
+        {/* Quick Examples */}
+        <div className="mt-5 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
+          <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap mr-1 flex-shrink-0 flex items-center gap-1">
+            <Wand2 className="w-3 h-3 text-brand-500" />
+            Try:
           </span>
           {customPresets.map((p, idx) => (
             <button
               key={idx}
+              type="button"
               onClick={() => {
                 setSourceLang(p.src);
                 setTargetLang(p.tgt);
                 setSourceText(p.text);
+                handleTranslate(p.text, p.src, p.tgt);
               }}
-              className="px-3 py-1.5 text-xs font-medium rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:border-violet-500 hover:text-violet-600 transition-colors shadow-2xs whitespace-nowrap flex-shrink-0 active:scale-95"
+              className="px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-200 dark:border-slate-700/80 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-brand-50/40 dark:hover:bg-brand-950/30 transition-all shadow-2xs whitespace-nowrap flex-shrink-0 active:scale-95"
             >
               {p.label}
             </button>
@@ -167,26 +227,24 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         </div>
       </div>
 
-      {/* Main Translation Card */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none overflow-hidden">
-        {/* Controls Bar */}
-        <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-800/20 grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-4 items-center">
+      {/* Main Translation Workspace Card */}
+      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-xl shadow-slate-200/60 dark:shadow-black/30 overflow-visible">
+        <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800/80 bg-slate-50/70 dark:bg-slate-850/60 rounded-t-3xl grid grid-cols-1 sm:grid-cols-[1fr,auto,1fr] gap-3 sm:gap-4 items-center">
           <LanguageSelector
             label="Source Language"
             languages={languages}
             selectedCode={sourceLang}
-            onSelect={setSourceLang}
+            onSelect={handleSelectSource}
             allowAuto={true}
           />
 
-          {/* Swap button */}
-          <div className="flex justify-center sm:pt-5 my-1 sm:my-0">
+          <div className="flex justify-center sm:pt-5 my-0.5 sm:my-0">
             <button
               type="button"
               onClick={handleSwap}
               disabled={sourceLang === 'auto'}
-              title="Swap Languages"
-              className="w-11 h-11 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-brand-600 active:rotate-180 active:scale-90 disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-sm flex items-center justify-center"
+              title={sourceLang === 'auto' ? 'Select a specific source language to swap' : 'Swap source and target'}
+              className="w-11 h-11 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-brand-50 dark:hover:bg-slate-700 hover:text-brand-600 hover:border-brand-300 active:rotate-180 active:scale-90 disabled:opacity-35 disabled:cursor-not-allowed transition-all duration-200 shadow-sm flex items-center justify-center"
             >
               <ArrowLeftRight className="w-4 h-4" />
             </button>
@@ -196,175 +254,196 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
             label="Target Language"
             languages={languages}
             selectedCode={targetLang}
-            onSelect={setTargetLang}
+            onSelect={handleSelectTarget}
             allowAuto={false}
           />
         </div>
 
-        {/* Text Areas Grid */}
+        {/* Dual Pane Editor */}
         <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100 dark:divide-slate-800">
-          {/* Source Text Box */}
-          <div className="p-5 sm:p-6 flex flex-col justify-between min-h-[280px]">
+          {/* Source Pane */}
+          <div className="p-5 sm:p-6 flex flex-col justify-between min-h-[260px] sm:min-h-[290px]">
             <div className="flex-1">
               <textarea
                 value={sourceText}
                 onChange={(e) => setSourceText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Type, paste, or select a sample sentence..."
-                className="w-full h-44 sm:h-52 bg-transparent text-slate-800 dark:text-slate-100 placeholder:text-slate-400 resize-none focus:outline-none text-base sm:text-lg leading-relaxed font-sans"
+                placeholder="Type or paste text in English, Hindi, Tamil, or Telugu..."
+                className={`w-full h-44 sm:h-52 bg-transparent text-slate-800 dark:text-slate-100 placeholder:text-slate-400 resize-none focus:outline-none leading-relaxed font-sans ${
+                  sourceText.length > 140 ? 'text-base' : 'text-lg sm:text-xl'
+                }`}
               />
             </div>
 
-            {/* Source Footer Actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/60 text-xs text-slate-400">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/70 text-xs text-slate-400">
               <div className="flex items-center gap-3">
                 {sourceText && (
                   <button
+                    type="button"
                     onClick={() => {
                       setSourceText('');
                       setResult(null);
+                      setDetectedBadge(null);
+                      setError(null);
                     }}
-                    className="flex items-center gap-1 hover:text-rose-500 transition-colors"
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-500 transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>Clear</span>
                   </button>
                 )}
-                {sourceText && (
+                {sourceText && 'speechSynthesis' in window && (
                   <button
-                    onClick={() => handleSpeak(sourceText)}
-                    className="flex items-center gap-1 hover:text-brand-500 transition-colors"
-                    title="Listen to source"
+                    type="button"
+                    onClick={() =>
+                      handleSpeak(
+                        sourceText,
+                        sourceLang === 'auto' ? (result?.source_language || 'en') : sourceLang,
+                        'src'
+                      )
+                    }
+                    className={`flex items-center gap-1 px-2 py-1 rounded-lg hover:bg-brand-50 dark:hover:bg-brand-950/40 transition-colors ${
+                      speakingSide === 'src' ? 'text-brand-600 font-semibold' : 'hover:text-brand-500'
+                    }`}
+                    title={speakingSide === 'src' ? 'Stop speaking' : 'Listen to source'}
                   >
                     <Volume2 className="w-3.5 h-3.5" />
+                    <span>{speakingSide === 'src' ? 'Stop' : 'Listen'}</span>
                   </button>
                 )}
               </div>
 
-              <div className="flex items-center gap-3">
-                <span>{sourceText.length} characters</span>
+              <div className="flex items-center gap-2 font-mono text-[11px]">
+                <span>{wordCount} words</span>
+                <span>•</span>
+                <span>{sourceText.length} chars</span>
               </div>
             </div>
           </div>
 
-          {/* Target Text Box */}
-          <div className="p-5 sm:p-6 flex flex-col justify-between min-h-[280px] bg-slate-50/30 dark:bg-slate-900/40">
+          {/* Target Output Pane */}
+          <div className="p-5 sm:p-6 flex flex-col justify-between min-h-[260px] sm:min-h-[290px] bg-slate-50/45 dark:bg-slate-950/35">
             <div className="flex-1">
               {loading ? (
                 <div className="h-44 sm:h-52 flex flex-col items-center justify-center gap-3 text-slate-400">
-                  <div className="w-8 h-8 rounded-full border-3 border-brand-500 border-t-transparent animate-spin"></div>
-                  <p className="text-xs font-medium animate-pulse">Running Transformer Inference...</p>
+                  <div className="w-9 h-9 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 animate-pulse">
+                    Decoding with {numBeams === 1 ? 'Greedy KV-Cache' : `${numBeams}-Beam Search`}...
+                  </p>
                 </div>
               ) : error ? (
-                <div className="h-44 sm:h-52 flex items-center justify-center p-4">
-                  <div className="flex items-center gap-2.5 text-rose-500 text-xs sm:text-sm bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 p-4 rounded-xl">
+                <div className="h-44 sm:h-52 flex items-center justify-center p-2">
+                  <div className="flex items-center gap-2.5 text-rose-600 dark:text-rose-400 text-xs sm:text-sm bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/50 p-4 rounded-2xl">
                     <AlertCircle className="w-5 h-5 flex-shrink-0" />
                     <span>{error}</span>
                   </div>
                 </div>
               ) : result ? (
-                <div className="h-44 sm:h-52 overflow-y-auto pr-2">
-                  <p className="text-slate-900 dark:text-white text-base sm:text-lg leading-relaxed font-sans select-all whitespace-pre-wrap">
+                <div className="h-44 sm:h-52 overflow-y-auto pr-2 animate-fade-up">
+                  <p className={`text-slate-900 dark:text-white leading-relaxed font-sans select-all whitespace-pre-wrap ${
+                    result.translated_text.length > 140 ? 'text-base' : 'text-lg sm:text-xl font-medium'
+                  }`}>
                     {result.translated_text}
                   </p>
                 </div>
               ) : (
-                <div className="h-44 sm:h-52 flex items-center justify-center text-slate-400 text-sm">
-                  Translation will appear here...
+                <div className="h-44 sm:h-52 flex flex-col items-center justify-center text-center text-slate-400 gap-2">
+                  <Sparkles className="w-5 h-5 text-slate-300 dark:text-slate-700" />
+                  <p className="text-sm">Translation output will appear here</p>
                 </div>
               )}
             </div>
 
-            {/* Target Footer Actions */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/60 text-xs text-slate-400">
-              <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/70 text-xs text-slate-400 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
                 {result && (
                   <>
                     <button
-                      onClick={handleCopy}
-                      className="flex items-center gap-1.5 hover:text-brand-500 transition-colors font-medium text-slate-600 dark:text-slate-300"
+                      type="button"
+                      onClick={() => handleCopy(result.translated_text)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-white dark:hover:bg-slate-800 hover:text-brand-600 transition-colors font-semibold text-slate-600 dark:text-slate-300"
                     >
                       {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                       <span>{copied ? 'Copied!' : 'Copy'}</span>
                     </button>
 
-                    <button
-                      onClick={() => handleSpeak(result.translated_text)}
-                      className={`flex items-center gap-1.5 hover:text-brand-500 transition-colors font-medium ${
-                        isSpeaking ? 'text-brand-500' : 'text-slate-600 dark:text-slate-300'
-                      }`}
-                    >
-                      <Volume2 className="w-3.5 h-3.5" />
-                      <span>Listen</span>
-                    </button>
+                    {'speechSynthesis' in window && (
+                      <button
+                        type="button"
+                        onClick={() => handleSpeak(result.translated_text, result.target_language || targetLang, 'tgt')}
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg hover:bg-white dark:hover:bg-slate-800 transition-colors font-semibold ${
+                          speakingSide === 'tgt' ? 'text-brand-600 dark:text-brand-400' : 'text-slate-600 dark:text-slate-300 hover:text-brand-500'
+                        }`}
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>{speakingSide === 'tgt' ? 'Stop' : 'Listen'}</span>
+                      </button>
+                    )}
                   </>
                 )}
               </div>
 
               {result && (
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="bg-violet-100 text-violet-700 dark:bg-violet-950/80 dark:text-violet-300 border border-violet-300 dark:border-violet-800 px-2 py-0.5 rounded text-[11px] font-bold">
-                    Custom PyTorch Transformer
-                  </span>
-                  <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded text-[11px] font-mono">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {detectedBadge && (
+                    <span className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 px-2 py-0.5 rounded-lg text-[11px] font-semibold">
+                      Detected: {detectedBadge}
+                    </span>
+                  )}
+                  <span className="flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200/70 dark:border-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded-lg text-[11px] font-mono">
                     <Clock className="w-3 h-3 text-brand-500" />
                     {result.inference_time}s
                   </span>
-                  {result.detected_language && (
-                    <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded text-[11px]">
-                      Detected: {result.source_language_name}
-                    </span>
-                  )}
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Translation Submit Bar */}
-        <div className="p-4 sm:p-5 bg-slate-50 dark:bg-slate-850 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-500">
-            {/* Beam search selector */}
+        {/* Bottom Action & Decoding Toolbar */}
+        <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-850 rounded-b-3xl border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-400">
             <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-slate-400" />
-              <span>Decoding:</span>
+              <Layers className="w-4 h-4 text-brand-500" />
+              <span className="font-medium">Decoding:</span>
               <select
                 value={numBeams}
                 onChange={(e) => setNumBeams(Number(e.target.value))}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-700 dark:text-slate-200 focus:outline-none"
+                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
               >
                 <option value={1}>Greedy (Fastest)</option>
                 <option value={2}>2 Beams (Balanced)</option>
-                <option value={4}>4 Beams (Highest Quality)</option>
+                <option value={4}>4 Beams (Best Quality)</option>
               </select>
             </div>
 
-            {/* Alternatives toggle */}
-            <label className="hidden sm:flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showAlternatives}
-                onChange={(e) => setShowAlternatives(e.target.checked)}
-                className="rounded text-brand-600 focus:ring-brand-500 dark:bg-slate-800"
-              />
-              <span>Generate Alternatives</span>
-            </label>
-
-            <span className="hidden xl:inline-flex items-center gap-1 text-[11px] text-slate-400">
-              <HelpCircle className="w-3.5 h-3.5 text-brand-500" />
-              <span>Automatic Truecasing & anti-hallucination enabled</span>
-            </span>
+            {numBeams > 1 && (
+              <label className="hidden sm:flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showAlternatives}
+                  onChange={(e) => setShowAlternatives(e.target.checked)}
+                  className="rounded text-brand-600 focus:ring-brand-500 dark:bg-slate-800"
+                />
+                <span>Show Beam Alternatives</span>
+              </label>
+            )}
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
+            {isSameLanguage && (
+              <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">
+                Select two different languages
+              </span>
+            )}
             <span className="hidden lg:inline text-[11px] text-slate-400">
-              Press <kbd className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 font-mono text-[10px]">Ctrl+Enter</kbd>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700 font-mono text-[10px]">Ctrl+Enter</kbd>
             </span>
             <button
               type="button"
-              onClick={handleTranslate}
-              disabled={loading || !sourceText.trim()}
-              className="w-full sm:w-auto min-h-[48px] flex items-center justify-center gap-2 px-7 py-3 rounded-2xl bg-gradient-to-r from-brand-600 via-indigo-600 to-brand-700 hover:from-brand-700 hover:to-indigo-800 text-white font-bold text-sm shadow-lg shadow-brand-500/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              onClick={() => handleTranslate()}
+              disabled={loading || !sourceText.trim() || isSameLanguage}
+              className="w-full sm:w-auto min-h-[46px] flex items-center justify-center gap-2 px-7 py-2.5 rounded-2xl bg-gradient-to-r from-brand-600 via-indigo-600 to-violet-600 hover:from-brand-700 hover:to-violet-700 text-white font-bold text-sm shadow-lg shadow-brand-500/25 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               <Sparkles className="w-4 h-4" />
               <span>{loading ? 'Translating...' : 'Translate'}</span>
@@ -373,28 +452,27 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         </div>
       </div>
 
-      {/* Alternative Hypotheses Section */}
-      {result && result.alternatives && result.alternatives.length > 0 && (
-        <div className="mt-6 p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
-          <div className="flex items-center gap-2 mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+      {/* Alternative Beam Hypotheses */}
+      {numBeams > 1 && showAlternatives && result && result.alternatives && result.alternatives.length > 0 && (
+        <div className="mt-6 p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm animate-fade-up">
+          <div className="flex items-center gap-2 mb-3 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             <Layers className="w-4 h-4 text-brand-500" />
-            <span>Alternative Beam Hypotheses</span>
+            <span>Alternative Beam Candidates</span>
           </div>
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {result.alternatives.map((alt, idx) => (
               <div
                 key={idx}
-                className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-sm text-slate-800 dark:text-slate-200"
+                className="flex items-center justify-between gap-2 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-sm text-slate-800 dark:text-slate-200"
               >
-                <span>{alt}</span>
+                <span className="leading-snug">{alt}</span>
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(alt);
-                  }}
-                  className="p-1 hover:text-brand-500 transition-colors"
-                  title="Copy alternative"
+                  type="button"
+                  onClick={() => handleCopy(alt, idx)}
+                  className="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 hover:text-brand-500 transition-colors flex-shrink-0"
+                  title="Copy candidate"
                 >
-                  <Copy className="w-3.5 h-3.5" />
+                  {copiedAltIdx === idx ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             ))}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { TranslatorPage } from './pages/TranslatorPage';
@@ -8,25 +8,26 @@ import { HistoryPage } from './pages/HistoryPage';
 import { DeepLearningLabPage } from './pages/DeepLearningLabPage';
 import { ModelInfoPage } from './pages/ModelInfoPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
-import { Language } from './types';
-import { fetchLanguages } from './services/api';
+import { Language, ModelInfo } from './types';
+import { fetchLanguages, fetchModelInfo } from './services/api';
 
 export function App() {
   const [activeTab, setActiveTab] = useState('translator');
   const [languages, setLanguages] = useState<Language[]>([]);
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [isDark, setIsDark] = useState(() => {
-    return localStorage.getItem('lingua_theme') === 'dark' ||
-      (!('lingua_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    return (
+      localStorage.getItem('lingua_theme') === 'dark' ||
+      (!('lingua_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    );
   });
 
-  // Prefill state for reusing from history
   const [reuseData, setReuseData] = useState<{
     text: string;
     src: string;
     tgt: string;
   } | null>(null);
 
-  // Apply dark mode class to html element
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
@@ -39,11 +40,17 @@ export function App() {
 
   const toggleTheme = () => setIsDark(!isDark);
 
-  // Load languages
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [activeTab]);
+
   useEffect(() => {
     fetchLanguages()
       .then(setLanguages)
       .catch((err) => console.error('Failed to load languages:', err));
+    fetchModelInfo()
+      .then(setModelInfo)
+      .catch((err) => console.error('Failed to load model specs:', err));
   }, []);
 
   const handleReuseTranslation = (text: string, srcLang: string, tgtLang: string) => {
@@ -52,21 +59,24 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200">
+    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 studio-mesh text-slate-900 dark:text-slate-100 transition-colors duration-200">
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         isDark={isDark}
         toggleTheme={toggleTheme}
+        modelInfo={modelInfo}
       />
 
       <main className="flex-1 pb-28 sm:pb-16">
         {activeTab === 'translator' && (
           <TranslatorPage
             languages={languages}
+            modelInfo={modelInfo}
             initialSourceText={reuseData?.text || ''}
             initialSourceLang={reuseData?.src || 'en'}
             initialTargetLang={reuseData?.tgt || 'hi'}
+            onReuseConsumed={() => setReuseData(null)}
           />
         )}
 
@@ -75,17 +85,17 @@ export function App() {
         {activeTab === 'document' && <DocumentTranslatorPage languages={languages} />}
 
         {activeTab === 'history' && (
-          <HistoryPage onReuseTranslation={handleReuseTranslation} />
+          <HistoryPage languages={languages} onReuseTranslation={handleReuseTranslation} />
         )}
 
-        {activeTab === 'lab' && <DeepLearningLabPage />}
+        {activeTab === 'lab' && <DeepLearningLabPage modelInfo={modelInfo} languages={languages} />}
 
         {activeTab === 'analytics' && <AnalyticsPage />}
 
-        {activeTab === 'model' && <ModelInfoPage />}
+        {activeTab === 'model' && <ModelInfoPage modelInfo={modelInfo} />}
       </main>
 
-      <Footer />
+      <Footer modelInfo={modelInfo} languages={languages} />
     </div>
   );
 }

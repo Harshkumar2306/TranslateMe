@@ -5,11 +5,15 @@ Database Session and Engine Initialization for SQLite
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "sqlite:///./translateme.db"
+from backend.app.core.config import settings
+
+DATABASE_URL = settings.DATABASE_URL
+
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Needed for SQLite in multi-threaded FastAPI
+    connect_args=connect_args,
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

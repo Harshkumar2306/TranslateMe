@@ -5,7 +5,7 @@
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Tests: 41 Passed](https://img.shields.io/badge/Tests-41%20Passed-brightgreen.svg)](tests/)
+[![Tests: 50 Passed](https://img.shields.io/badge/Tests-50%20Passed-brightgreen.svg)](tests/)
 
 > **A 100% Genuine From-Scratch Multilingual Neural Machine Translation System.**  
 > Built as an advanced Deep Learning research system featuring an independently implemented PyTorch Sequence-to-Sequence Transformer initialized randomly and trained through our own training pipeline across English, Hindi, Tamil, and Telugu. Zero pretrained translation weights (no NLLB, no HuggingFace, no mBART).
@@ -34,14 +34,15 @@
 
 ## Architectural Specifications
 
-### 1. Production Active Checkpoint (28M)
-* **Model Checkpoint**: [`ml_lab/checkpoints/custom_multilingual_transformer.pt`](ml_lab/checkpoints/custom_multilingual_transformer.pt) (66.17 MB FP16)
-* **Total Parameters**: **27,974,144 (27.97M)**
-* **Encoder / Decoder Layers**: **6 Layers Encoder + 6 Layers Decoder** ($N = 12$ sub-stacks)
-* **Attention Heads**: **6 Heads** ($d_k = d_v = 64$)
-* **Hidden Dimension ($d_{\text{model}}$)**: **384**
-* **Feed-Forward Dimension ($d_{\text{ff}}$)**: **1536**
-* **Vocabulary Size**: 8,192 ByteLevel BPE multilingual subwords
+### 1. Production Active Checkpoint (113.29M Asymmetric `TranslateMe-V2`)
+* **Model Checkpoint**: [`ml_lab/checkpoints/custom_multilingual_transformer.pt`](ml_lab/checkpoints/custom_multilingual_transformer.pt) (432.3 MB FP32, tracked via Git LFS)
+* **Total Parameters**: **113,292,800 (113.29M)**
+* **Encoder / Decoder Layers**: **8 Layers Encoder + 4 Layers Decoder** (Asymmetric stack)
+* **Attention Heads**: **12 Heads** ($d_k = d_v = 64$) with QK-Norm and RoPE
+* **Hidden Dimension ($d_{\text{model}}$)**: **768**
+* **Feed-Forward Dimension ($d_{\text{ff}}$)**: **2048 (SwiGLU)**
+* **Vocabulary Size**: 24,576 ByteLevel BPE multilingual subwords (`<2en>`, `<2hi>`, `<2ta>`, `<2te>`)
+* **Training Progress**: 5 epochs / 137,500 optimizer steps, best validation loss **1.0593**
 * **Hardware Execution**: Apple Silicon GPU (`mps`) / NVIDIA CUDA / CPU
 
 ### 2. Modern 100M+ Architecture (`TranslateMe-V2`)
@@ -122,7 +123,7 @@ pip install -r requirements.txt
 source .venv/bin/activate
 pytest tests/ -v
 ```
-*(All 41 tests pass: Empirical Overfitting, 3-Way Batch Decoding, RoPE, RMSNorm, SwiGLU, QK-Norm, Resumable Trainer, causal masking, tokenizer, and API endpoints).*
+*(All 50 tests pass: Empirical Overfitting, 3-Way Batch Decoding, RoPE, RMSNorm, SwiGLU, QK-Norm, Resumable Trainer, causal masking, tokenizer, document translation, and API endpoints).*
 
 ### 3. Start Application Server
 ```bash

@@ -1,4 +1,13 @@
-import { Language, TranslationResult, HistoryItem, ModelInfo, AnalyticsData, LabInfo } from '../types';
+import {
+  Language,
+  TranslationResult,
+  HistoryItem,
+  ModelInfo,
+  AnalyticsData,
+  LabInfo,
+  DocumentTranslateResult,
+  AttentionResult,
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -13,8 +22,7 @@ export async function translateText(
   sourceLanguage: string,
   targetLanguage: string,
   numBeams: number = 2,
-  returnAlternatives: boolean = false,
-  modelType: string = 'custom'
+  returnAlternatives: boolean = false
 ): Promise<TranslationResult> {
   const res = await fetch(`${API_BASE}/translate`, {
     method: 'POST',
@@ -25,7 +33,6 @@ export async function translateText(
       target_language: targetLanguage,
       num_beams: numBeams,
       return_alternatives: returnAlternatives,
-      model_type: modelType
     }),
   });
   if (!res.ok) {
@@ -35,7 +42,9 @@ export async function translateText(
   return res.json();
 }
 
-export async function detectLanguage(text: string): Promise<{ detected_code: string; detected_name: string; confidence: number }> {
+export async function detectLanguage(
+  text: string
+): Promise<{ detected_code: string; detected_name: string; confidence: number }> {
   const res = await fetch(`${API_BASE}/detect-language`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -65,18 +74,13 @@ export async function translateDocument(
   file: File,
   sourceLanguage: string,
   targetLanguage: string
-): Promise<{
-  filename: string;
-  total_paragraphs: number;
-  translated_text: string;
-  inference_time: number;
-}> {
+): Promise<DocumentTranslateResult> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('source_language', sourceLanguage);
   formData.append('target_language', targetLanguage);
 
-  const res = await fetch(`${API_BASE}/translate/document`, {
+  const res = await fetch(`${API_BASE}/document/translate`, {
     method: 'POST',
     body: formData,
   });
@@ -84,6 +88,16 @@ export async function translateDocument(
     const error = await res.json().catch(() => ({ detail: 'Document translation failed' }));
     throw new Error(error.detail || 'Document translation failed');
   }
+  return res.json();
+}
+
+export async function fetchHealth(): Promise<{
+  status: string;
+  model_loaded: boolean;
+  device?: { device_type?: string; device_name?: string };
+}> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) throw new Error('Health check failed');
   return res.json();
 }
 
@@ -109,18 +123,15 @@ export async function fetchAttentionMatrix(
   text: string,
   sourceLang: string = 'en',
   targetLang: string = 'hi'
-): Promise<{
-  source_text: string;
-  translated_text: string;
-  source_tokens: string[];
-  target_tokens: string[];
-  attention_matrix: number[][];
-}> {
+): Promise<AttentionResult> {
   const res = await fetch(`${API_BASE}/lab/attention`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, source_lang: sourceLang, target_lang: targetLang })
+    body: JSON.stringify({ text, source_lang: sourceLang, target_lang: targetLang }),
   });
-  if (!res.ok) throw new Error('Failed to fetch attention weights');
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Failed to fetch attention weights' }));
+    throw new Error(error.detail || 'Failed to fetch attention weights');
+  }
   return res.json();
 }
