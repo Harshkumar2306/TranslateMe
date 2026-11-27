@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Tests: 50 Passed](https://img.shields.io/badge/Tests-50%20Passed-brightgreen.svg)](tests/)
 
-> **A 100% Genuine From-Scratch Multilingual Neural Machine Translation System.**  
+> **A Multilingual Neural Machine Translation System.**  
 > Built as an advanced Deep Learning research system featuring an independently implemented PyTorch Sequence-to-Sequence Transformer initialized randomly and trained through our own training pipeline across English, Hindi, Tamil, and Telugu. Zero pretrained translation weights (no NLLB, no HuggingFace, no mBART).
 
 ---
