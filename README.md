@@ -1,4 +1,4 @@
-# TranslateMe — From-Scratch Multilingual Neural Machine Translation
+# TranslateMe — Multilingual Neural Machine Translation
 
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyTorch 2.6](https://img.shields.io/badge/PyTorch-2.6-EE4C2C.svg)](https://pytorch.org/)
@@ -34,7 +34,7 @@
 
 ## Architectural Specifications
 
-### 1. Production Active Checkpoint (113.29M Asymmetric `TranslateMe-V2`)
+### 1. Production Active Checkpoint (113.29M Asymmetric `TranslateMe`)
 * **Model Checkpoint**: [`ml_lab/checkpoints/custom_multilingual_transformer.pt`](ml_lab/checkpoints/custom_multilingual_transformer.pt) (432.3 MB FP32, tracked via Git LFS)
 * **Total Parameters**: **113,292,800 (113.29M)**
 * **Encoder / Decoder Layers**: **8 Layers Encoder + 4 Layers Decoder** (Asymmetric stack)
