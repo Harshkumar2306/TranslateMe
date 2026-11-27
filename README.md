@@ -134,6 +134,3 @@ Open **`http://localhost:8000`** to access the live web application.
 
 ---
 
-## License
-
-This project is licensed under the **MIT License**. All Transformer architectures are independent academic implementations built from scratch with PyTorch.
