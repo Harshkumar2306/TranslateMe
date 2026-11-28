@@ -73,7 +73,6 @@ export function App() {
         {activeTab === 'translator' && (
           <TranslatorPage
             languages={languages}
-            modelInfo={modelInfo}
             initialSourceText={reuseData?.text || ''}
             initialSourceLang={reuseData?.src || 'en'}
             initialTargetLang={reuseData?.tgt || 'hi'}

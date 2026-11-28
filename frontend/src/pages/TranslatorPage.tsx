@@ -11,13 +11,12 @@ import {
   AlertCircle,
   Wand2,
 } from 'lucide-react';
-import { Language, TranslationResult, ModelInfo } from '../types';
+import { Language, TranslationResult } from '../types';
 import { translateText, detectLanguage } from '../services/api';
 import { LanguageSelector } from '../components/LanguageSelector';
 
 interface TranslatorPageProps {
   languages: Language[];
-  modelInfo?: ModelInfo | null;
   initialSourceText?: string;
   initialSourceLang?: string;
   initialTargetLang?: string;
@@ -26,7 +25,6 @@ interface TranslatorPageProps {
 
 export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   languages,
-  modelInfo,
   initialSourceText = '',
   initialSourceLang = 'en',
   initialTargetLang = 'hi',
@@ -190,14 +188,6 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     { label: 'TE → EN', src: 'te', tgt: 'en', text: 'కంప్యూటర్ సైన్స్ ఆధునిక ప్రపంచాన్ని మారుస్తుంది.' },
   ];
 
-  const encCount = modelInfo?.encoder_layers ?? modelInfo?.layers;
-  const decCount = modelInfo?.decoder_layers ?? modelInfo?.layers;
-  const layerText = encCount && decCount
-    ? encCount === decCount
-      ? `${encCount} Layers`
-      : `${encCount}E / ${decCount}D Layers`
-    : null;
-
   return (
     <div className="max-w-6xl mx-auto px-4 py-7 sm:py-9 animate-fade-up">
       {/* Hero Header */}
@@ -205,11 +195,6 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         <h1 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold tracking-tight text-slate-900 dark:text-white leading-tight">
           TranslateMe Studio
         </h1>
-        <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-400 max-w-2xl mx-auto">
-          {modelInfo
-            ? `${modelInfo.model_name} • ${layerText} • ${modelInfo.attention_heads} Heads • d=${modelInfo.d_model} • ${modelInfo.vocab_size}`
-            : 'Multilingual Neural Machine Translation trained from scratch in PyTorch.'}
-        </p>
 
         {/* Quick Examples */}
         <div className="mt-5 flex items-center justify-start sm:justify-center gap-2 overflow-x-auto no-scrollbar py-1 px-1">
