@@ -127,7 +127,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                   type="button"
                   onClick={() => setActiveTab('model')}
                   title="View active PyTorch model specifications"
-                  className="hidden xl:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-100/80 dark:hover:bg-emerald-950/70 transition-colors whitespace-nowrap"
+                  className="hidden md:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/60 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-xs font-semibold hover:bg-emerald-100/80 dark:hover:bg-emerald-950/70 transition-colors whitespace-nowrap"
                 >
                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                   <span className="font-mono">

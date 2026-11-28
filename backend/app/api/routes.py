@@ -415,6 +415,12 @@ def get_deep_learning_lab_info():
     is_modern = isinstance(model, ModernSeq2SeqTransformer)
     n_params = custom_multilingual_engine.get_model_parameter_count()
 
+    if model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model checkpoint is not loaded. Ensure custom_multilingual_transformer.pt exists.",
+        )
+
     if is_modern:
         mcfg = model.config
         enc_layers = mcfg.num_encoder_layers
@@ -429,17 +435,17 @@ def get_deep_learning_lab_info():
         soft_cap = mcfg.soft_cap
         share_embeddings = mcfg.share_embeddings
     else:
-        enc_layers = cfg.get("num_encoder_layers", cfg.get("num_layers", 6))
-        dec_layers = cfg.get("num_decoder_layers", cfg.get("num_layers", 6))
-        n_heads = cfg.get("n_heads", 6)
-        d_model = cfg.get("d_model", 384)
-        d_ff = cfg.get("d_ff", 1536)
-        vocab_size = cfg.get("vocab_size", custom_multilingual_engine.tokenizer.vocab_size if custom_multilingual_engine.tokenizer else 8192)
+        enc_layers = len(model.encoder.layers)
+        dec_layers = len(model.decoder.layers)
+        n_heads = model.encoder.layers[0].self_attn.n_heads
+        d_model = model.d_model
+        d_ff = model.encoder.layers[0].feed_forward.w_1.out_features
+        vocab_size = model.generator.proj.out_features
         use_rope = False
         use_qk_norm = False
         use_layerscale = False
         soft_cap = None
-        share_embeddings = cfg.get("share_embeddings", True)
+        share_embeddings = model.share_embeddings
 
     train_losses = meta.get("train_loss_history", [])
     val_losses = meta.get("val_loss_history", [])
@@ -566,6 +572,12 @@ def get_model_specifications():
     n_params = custom_multilingual_engine.get_model_parameter_count()
     langs_count = len(get_supported_languages())
 
+    if model is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model checkpoint is not loaded. Ensure custom_multilingual_transformer.pt exists.",
+        )
+
     if isinstance(model, ModernSeq2SeqTransformer):
         mcfg = model.config
         head_dim = mcfg.d_model // max(1, mcfg.n_heads)
@@ -639,12 +651,12 @@ def get_model_specifications():
             ],
         )
 
-    enc_layers = cfg.get("num_encoder_layers", cfg.get("num_layers", 6))
-    dec_layers = cfg.get("num_decoder_layers", cfg.get("num_layers", 6))
-    n_heads = cfg.get("n_heads", 6)
-    d_model = cfg.get("d_model", 384)
-    d_ff = cfg.get("d_ff", 1536)
-    vocab_num = cfg.get("vocab_size", custom_multilingual_engine.tokenizer.vocab_size if custom_multilingual_engine.tokenizer else 8192)
+    enc_layers = len(model.encoder.layers)
+    dec_layers = len(model.decoder.layers)
+    n_heads = model.encoder.layers[0].self_attn.n_heads
+    d_model = model.d_model
+    d_ff = model.encoder.layers[0].feed_forward.w_1.out_features
+    vocab_num = model.generator.proj.out_features
     best_val = meta.get("best_val_loss")
 
     return ModelInfoResponse(
@@ -659,7 +671,7 @@ def get_model_specifications():
         head_dim=d_model // max(1, n_heads),
         d_model=d_model,
         d_ff=d_ff,
-        max_len=cfg.get("max_len", 512),
+        max_len=cfg.get("max_len", model.encoder.embedding.pe.pe.size(1)),
         dropout=cfg.get("dropout", 0.1),
         vocab_size=f"{vocab_num:,} subwords",
         tokenizer_type="Byte-Pair Encoding (BPE) Multilingual Subword Tokenizer (ByteLevel)",
@@ -673,7 +685,7 @@ def get_model_specifications():
             f"Loaded weights: {meta.get('checkpoint_size_mb')} MB ({meta.get('weight_dtype')})",
         ],
         is_modern=False,
-        weight_tying="3-Way Shared Embeddings" if cfg.get("share_embeddings", True) else "Untied Projections",
+        weight_tying="3-Way Shared Embeddings" if model.share_embeddings else "Untied Projections",
         checkpoint_size_mb=meta.get("checkpoint_size_mb"),
         weight_dtype=meta.get("weight_dtype"),
         epochs_completed=meta.get("epochs_completed"),

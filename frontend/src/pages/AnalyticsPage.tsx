@@ -142,13 +142,12 @@ export const AnalyticsPage: React.FC = () => {
                   <Pie
                     data={data.top_source_languages}
                     cx="50%"
-                    cy="50%"
-                    innerRadius={55}
-                    outerRadius={80}
+                    cy="48%"
+                    innerRadius={50}
+                    outerRadius={74}
                     paddingAngle={4}
                     dataKey="count"
                     nameKey="language"
-                    label={({ language, count }) => `${language}: ${count}`}
                   >
                     {data.top_source_languages.map((_, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -157,7 +156,15 @@ export const AnalyticsPage: React.FC = () => {
                   <Tooltip
                     contentStyle={{ backgroundColor: '#1e293b', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                   />
-                  <Legend verticalAlign="bottom" height={24} wrapperStyle={{ fontSize: '11px' }} />
+                  <Legend
+                    verticalAlign="bottom"
+                    height={28}
+                    wrapperStyle={{ fontSize: '11px' }}
+                    formatter={(value: string) => {
+                      const entry = data.top_source_languages.find((item) => item.language === value);
+                      return entry ? `${value} (${entry.count})` : value;
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             ) : (

@@ -30,15 +30,27 @@ export const DeepLearningLabPage: React.FC<DeepLearningLabPageProps> = ({ modelI
   const [liveAttentionData, setLiveAttentionData] = useState<AttentionResult | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetchLabInfo()
       .then((data) => {
-        setLabInfo(data);
+        if (!cancelled) setLabInfo(data);
       })
-      .catch((err) => setLabError(err.message || 'Failed to load lab data'))
-      .finally(() => setLoading(false));
-
-    handleFetchAttention('Hello, how are you today?', 'en', 'hi');
+      .catch((err) => {
+        if (!cancelled) setLabError(err.message || 'Failed to load lab data');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'attention' && !liveAttentionData && !attnLoading && !attnError) {
+      handleFetchAttention(attnInputText, attnSrcLang, attnTgtLang);
+    }
+  }, [activeTab]);
 
   const handleFetchAttention = async (text: string, src: string, tgt: string) => {
     if (!text.trim()) return;
@@ -324,13 +336,23 @@ export const DeepLearningLabPage: React.FC<DeepLearningLabPageProps> = ({ modelI
                   type="text"
                   value={attnInputText}
                   onChange={(e) => setAttnInputText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleFetchAttention(attnInputText, attnSrcLang, attnTgtLang);
+                    }
+                  }}
                   placeholder="Enter sentence to extract attention..."
                   className="flex-1 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500"
                 />
                 <div className="flex items-center gap-2 w-full sm:w-auto">
                   <select
                     value={attnSrcLang}
-                    onChange={(e) => setAttnSrcLang(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === attnTgtLang) setAttnTgtLang(attnSrcLang);
+                      setAttnSrcLang(next);
+                    }}
                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
                   >
                     {langOptions.map((l) => (
@@ -340,7 +362,11 @@ export const DeepLearningLabPage: React.FC<DeepLearningLabPageProps> = ({ modelI
                   <span className="text-xs text-slate-400">→</span>
                   <select
                     value={attnTgtLang}
-                    onChange={(e) => setAttnTgtLang(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      if (next === attnSrcLang) setAttnSrcLang(attnTgtLang);
+                      setAttnTgtLang(next);
+                    }}
                     className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300"
                   >
                     {langOptions.map((l) => (

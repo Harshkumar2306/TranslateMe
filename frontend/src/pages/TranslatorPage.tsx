@@ -46,6 +46,14 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const [speakingSide, setSpeakingSide] = useState<'src' | 'tgt' | null>(null);
 
   useEffect(() => {
+    return () => {
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (initialSourceText) {
       setSourceText(initialSourceText);
       setSourceLang(initialSourceLang || 'en');

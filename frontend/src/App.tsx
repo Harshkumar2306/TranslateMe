@@ -16,9 +16,10 @@ export function App() {
   const [languages, setLanguages] = useState<Language[]>([]);
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem('translateme_theme') ?? localStorage.getItem('lingua_theme');
     return (
-      localStorage.getItem('lingua_theme') === 'dark' ||
-      (!('lingua_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)
+      saved === 'dark' ||
+      (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches)
     );
   });
 
@@ -31,10 +32,10 @@ export function App() {
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
-      localStorage.setItem('lingua_theme', 'dark');
+      localStorage.setItem('translateme_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      localStorage.setItem('lingua_theme', 'light');
+      localStorage.setItem('translateme_theme', 'light');
     }
   }, [isDark]);
 

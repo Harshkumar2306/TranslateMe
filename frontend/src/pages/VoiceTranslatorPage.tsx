@@ -67,6 +67,9 @@ export const VoiceTranslatorPage: React.FC<VoiceTranslatorPageProps> = ({ langua
       } catch {
         // Ignore cleanup stop errors
       }
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
     };
   }, [sourceLang, languages]);
 
