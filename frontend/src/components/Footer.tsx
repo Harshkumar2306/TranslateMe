@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, ShieldCheck } from 'lucide-react';
+import { Cpu } from 'lucide-react';
 import { Language, ModelInfo } from '../types';
 
 interface FooterProps {
@@ -12,7 +12,7 @@ export const Footer: React.FC<FooterProps> = ({ modelInfo, languages = [] }) => 
   const langCount = languages.length || modelInfo?.supported_languages_count || 0;
 
   return (
-    <footer className="mt-auto border-t border-slate-200/80 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/50 backdrop-blur-md py-8 mb-16 sm:mb-0 text-xs text-slate-500 dark:text-slate-400">
+    <footer className="mt-auto border-t border-slate-200/80 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/50 backdrop-blur-md py-6 mb-16 sm:mb-0 text-xs text-slate-500 dark:text-slate-400">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
@@ -36,16 +36,6 @@ export const Footer: React.FC<FooterProps> = ({ modelInfo, languages = [] }) => 
                 </div>
               </>
             )}
-          </div>
-        </div>
-
-        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800/80 flex flex-col sm:flex-row justify-between items-center gap-2">
-          <p>
-            From-scratch PyTorch implementation{modelInfo?.num_parameters ? ` • ${modelInfo.num_parameters}` : ''}. Zero pretrained translation weights.
-          </p>
-          <div className="flex items-center gap-2 text-slate-400">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            <span>Local Model Inference</span>
           </div>
         </div>
       </div>
