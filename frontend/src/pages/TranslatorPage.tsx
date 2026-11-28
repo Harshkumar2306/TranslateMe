@@ -7,7 +7,6 @@ import {
   Trash2,
   Sparkles,
   Clock,
-  Layers,
   AlertCircle,
   Wand2,
 } from 'lucide-react';
@@ -38,9 +37,6 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [copiedAltIdx, setCopiedAltIdx] = useState<number | null>(null);
-  const [numBeams, setNumBeams] = useState(2);
-  const [showAlternatives, setShowAlternatives] = useState(true);
   const [speakingSide, setSpeakingSide] = useState<'src' | 'tgt' | null>(null);
 
   useEffect(() => {
@@ -119,8 +115,8 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
         textToRun,
         effectiveSrc,
         effectiveTgt,
-        numBeams,
-        numBeams > 1 && showAlternatives
+        2,
+        false
       );
       setResult(res);
     } catch (err: any) {
@@ -142,16 +138,11 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
     }
   };
 
-  const handleCopy = (text: string, altIdx: number | null = null) => {
+  const handleCopy = (text: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
-    if (altIdx === null) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } else {
-      setCopiedAltIdx(altIdx);
-      setTimeout(() => setCopiedAltIdx(null), 1800);
-    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
   };
 
   const handleSpeak = (text: string, langCode: string, side: 'src' | 'tgt') => {
@@ -321,7 +312,7 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
                 <div className="h-44 sm:h-52 flex flex-col items-center justify-center gap-3 text-slate-400">
                   <div className="w-9 h-9 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
                   <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 animate-pulse">
-                    Decoding with {numBeams === 1 ? 'Greedy KV-Cache' : `${numBeams}-Beam Search`}...
+                    Translating with Custom Transformer...
                   </p>
                 </div>
               ) : error ? (
@@ -393,37 +384,9 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
           </div>
         </div>
 
-        {/* Bottom Action & Decoding Toolbar */}
-        <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-850 rounded-b-3xl border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 dark:text-slate-400">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-brand-500" />
-              <span className="font-medium">Decoding:</span>
-              <select
-                value={numBeams}
-                onChange={(e) => setNumBeams(Number(e.target.value))}
-                className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/25"
-              >
-                <option value={1}>Greedy (Fastest)</option>
-                <option value={2}>2 Beams (Balanced)</option>
-                <option value={4}>4 Beams (Best Quality)</option>
-              </select>
-            </div>
-
-            {numBeams > 1 && (
-              <label className="hidden sm:flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={showAlternatives}
-                  onChange={(e) => setShowAlternatives(e.target.checked)}
-                  className="rounded text-brand-600 focus:ring-brand-500 dark:bg-slate-800"
-                />
-                <span>Show Beam Alternatives</span>
-              </label>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
+        {/* Bottom Action Toolbar */}
+        <div className="p-4 sm:p-5 bg-slate-50/90 dark:bg-slate-850 rounded-b-3xl border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-4">
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
             {isSameLanguage && (
               <span className="text-xs text-amber-600 dark:text-amber-400 font-medium">
                 Select two different languages
@@ -444,34 +407,6 @@ export const TranslatorPage: React.FC<TranslatorPageProps> = ({
           </div>
         </div>
       </div>
-
-      {/* Alternative Beam Hypotheses */}
-      {numBeams > 1 && showAlternatives && result && result.alternatives && result.alternatives.length > 0 && (
-        <div className="mt-6 p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm animate-fade-up">
-          <div className="flex items-center gap-2 mb-3 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-            <Layers className="w-4 h-4 text-brand-500" />
-            <span>Alternative Beam Candidates</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {result.alternatives.map((alt, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between gap-2 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 text-sm text-slate-800 dark:text-slate-200"
-              >
-                <span className="leading-snug">{alt}</span>
-                <button
-                  type="button"
-                  onClick={() => handleCopy(alt, idx)}
-                  className="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 hover:text-brand-500 transition-colors flex-shrink-0"
-                  title="Copy candidate"
-                >
-                  {copiedAltIdx === idx ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
